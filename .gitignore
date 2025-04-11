@@ -1,0 +1,17 @@
+# Ignore all __pycache__ directories
+__pycache__/
+
+# Ignore other common temporary files and directories
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Ignore Python-specific files
+*.pyc
+*.pyo
+
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
