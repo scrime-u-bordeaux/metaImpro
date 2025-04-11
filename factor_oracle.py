@@ -102,3 +102,4 @@ def compute_rsl(supply, sequence):
                 rsl[i] = 1
     
     return rsl
+
