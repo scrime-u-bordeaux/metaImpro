@@ -15,3 +15,9 @@ Thumbs.db
 # Ignore IDE-specific files
 .vscode/
 .idea/
+
+
+#ignore the dataset or midi files
+*.json
+*.midi
+*.mid
