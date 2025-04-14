@@ -67,7 +67,7 @@ def extract_features(midi_file, output='nested_list'):
         if output == 'nested_list':
             return mnotes
         elif output == 'polars':
-            return pl.DataFrame(mnotes, schema=['pitch', 'onset', 'duration', 'velocity'])
+            return pl.DataFrame(mnotes, schema=['pitch', 'onset', 'duration', 'velocity'], orient="row")
         else:
             raise ValueError("Le paramètre output doit être 'nested_list' ou 'polars'")
     except Exception as e:
@@ -91,3 +91,12 @@ def find_midi_files(base_dir):
                 midi_files.append(midi_path)
     print(f"Total de {len(midi_files)} fichiers MIDI trouvés.")
     return midi_files
+
+def create_symbole(matrix):
+    """
+    On prend le dico en entrée puis on en ressort un tuple par notes
+    """
+    if isinstance(matrix,pl.DataFrame):
+        return matrix.select(["pitch", "duration", "velocity"]).rows()
+    else:
+        return [(note[0], note[2], note[3]) for note in matrix]
