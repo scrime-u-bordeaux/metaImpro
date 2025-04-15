@@ -11,7 +11,7 @@ def get_input(transitions, supply, midSymbols):
     global previous_state
     previous_state = 0
 
-
+    lenSymbols = len(midSymbols)
     # Initialisation de pygame pour la gestion des événements clavier.
     pygame.init()
     pygame.display.set_mode((200,200))
@@ -47,14 +47,9 @@ def get_input(transitions, supply, midSymbols):
     # Interface graphique simple
     font = pygame.font.Font(None, 36)
     screen = pygame.display.get_surface()
-    clock = pygame.time.Clock()
-    
-    melodic_contour = {}
     note_history = {}  # Pour l'affichage
     note_order = 0
 
-    # Variables pour le calcul du gap entre les notes
-    last_keyboard_index = None
     
     run = True
     while run:
@@ -79,40 +74,31 @@ def get_input(transitions, supply, midSymbols):
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     run = False
+                # Si la touche est dans notre liste et n'est pas déjà appuyée
                 if event.key in key_to_note and event.key not in key_start_time:
                     key_start_time[event.key] = time()
-                    current_kb_index = keyboard_mapping[event.key]
-                    if last_keyboard_index is None:
-                        desired_gap = 100  # Pas de gap pour la première note
-                    else:
-                        # Par exemple, chaque pas dans le mapping correspond à 2 unités de pitch
-                        desired_gap = (current_kb_index - last_keyboard_index) * 10
-                    last_keyboard_index = current_kb_index
-                    
-                    # Génération de la note en passant desired_gap
-                    new_state, note = generate_note(previous_state, 0, transitions, supply, midSymbols, desired_gap=desired_gap, p=0.5)
-                    
+                    # Génération de la note en utilisant le mécanisme de l'oracle
+                    new_state, note = generate_note(previous_state, 0, transitions, supply, midSymbols, p=0.7)
+                    # On met à jour globalement previous_state dès le keydown pour garder la continuité d'improvisation
+                    previous_state = new_state
                     # Jouer la note via FluidSynth
                     fs.noteon(0, note[0], note[2])
-                    note_info = f"KeyDown - {pygame.key.name(event.key)}: Pitch {note[0]}, Vel {note[2]}, Etat {new_state}"
-                    print(note_info)
-                    melodic_contour[note_order] = {"keyboard_index": current_kb_index, "pitch": note[0]}
+                    note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}"
+                    #print(note_info)
                     note_history[note_order] = note_info
                     note_order += 1
-                    
+                    # Enregistrer dans le buffer la note active pour pouvoir l'arrêter plus tard
                     note_buffer[event.key] = (new_state, note[0])
             
             elif event.type == pygame.KEYUP:
                 if event.key in key_to_note and event.key in key_start_time:
                     duration = time() - key_start_time[event.key]
+                    # Arrêter la note correspondante
                     if event.key in note_buffer:
                         state, pitch = note_buffer[event.key]
-                        updated_note = (pitch, duration, midSymbols[state][2] if state < len(midSymbols) else 64)
-                        previous_state = state
                         fs.noteoff(0, pitch)
-                        note_info = f"KeyUp - {pygame.key.name(event.key)}: Pitch {pitch}, Dur {duration:.2f}, Etat {state}"
+                        note_info = f"KeyUp: Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}"
                         print(note_info)
-                        melodic_contour[note_order] = {"keyboard_index": keyboard_mapping[event.key], "pitch": pitch}
                         note_history[note_order] = note_info
                         note_order += 1
                         del note_buffer[event.key]
@@ -126,7 +112,7 @@ def get_input(transitions, supply, midSymbols):
 
 if __name__ == '__main__':
     # Pipeline de génération des symboles à partir d'un fichier MIDI.
-    midFile = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._3.mid'
+    midFile = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._8.mid'
     midFeatures = extract_features(midFile, "polars")
     midSymbols = create_symbole(midFeatures)   # Liste de tuples (pitch, duration, velocity)
     transitions, supply = fo.oracle(sequence=midSymbols)
