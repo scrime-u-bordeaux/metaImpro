@@ -10,7 +10,7 @@ import fluidsynth
 def get_input(transitions, supply, midSymbols):
     global previous_state
     previous_state = 0
-
+    
     lenSymbols = len(midSymbols)
     # Initialisation de pygame pour la gestion des événements clavier.
     pygame.init()
@@ -50,6 +50,9 @@ def get_input(transitions, supply, midSymbols):
     note_history = {}  # Pour l'affichage
     note_order = 0
 
+    # Pour le calcul de la durée effective :
+    last_note_end_time = None
+    last_note_duration = 0.1  # Valeur par défaut pour la première note
     
     run = True
     while run:
@@ -77,33 +80,49 @@ def get_input(transitions, supply, midSymbols):
                 # Si la touche est dans notre liste et n'est pas déjà appuyée
                 if event.key in key_to_note and event.key not in key_start_time:
                     key_start_time[event.key] = time()
-                    # Génération de la note en utilisant le mécanisme de l'oracle
-                    new_state, note = generate_note(previous_state, 0, transitions, supply, midSymbols, p=0.7)
-                    # On met à jour globalement previous_state dès le keydown pour garder la continuité d'improvisation
+
+                    # Calcul de la durée effective
+                    current_time = time()
+                    if last_note_end_time is not None:
+                        if current_time >= last_note_end_time:
+                            silence = current_time - last_note_end_time
+                            duration_eff = last_note_duration + silence
+                        else:
+                            duration_eff = last_note_duration
+                    else:
+                        duration_eff = last_note_duration  # pour la première note
+
+                    # Génération de la note en passant la durée effective
+                    new_state, note = generate_note(previous_state, duration_eff, transitions, supply, midSymbols, p=0.7)
+                    # Mise à jour de l'état global pour conserver la continuité de l'improvisation
                     previous_state = new_state
                     # Jouer la note via FluidSynth
                     fs.noteon(0, note[0], note[2])
-                    note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}"
-                    #print(note_info)
+                    note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, Etat {new_state}/{lenSymbols}"
+                    print(note_info)
                     note_history[note_order] = note_info
                     note_order += 1
-                    # Enregistrer dans le buffer la note active pour pouvoir l'arrêter plus tard
                     note_buffer[event.key] = (new_state, note[0])
             
             elif event.type == pygame.KEYUP:
                 if event.key in key_to_note and event.key in key_start_time:
+                    # Calculer la durée d'appui de la touche
                     duration = time() - key_start_time[event.key]
                     # Arrêter la note correspondante
                     if event.key in note_buffer:
                         state, pitch = note_buffer[event.key]
                         fs.noteoff(0, pitch)
-                        note_info = f"KeyUp: Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}"
+                        note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, Etat {state}/{lenSymbols}"
                         print(note_info)
                         note_history[note_order] = note_info
                         note_order += 1
                         del note_buffer[event.key]
                     del key_start_time[event.key]
-        
+                    
+                    # Mémoriser la fin de la note et sa durée pour le calcul futur
+                    last_note_end_time = time()
+                    last_note_duration = duration
+                    print(last_note_end_time)
         pygame.display.flip()
     
     # Nettoyer
