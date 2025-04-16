@@ -26,6 +26,6 @@ def play_midi(file_path):
 
 if __name__ == "__main__":
     # The path to the MIDI file
-    output_path ="/home/sylogue/stage/FO/output.mid"
+    output_path ="/home/sylogue/stage/metaImpro/output_markov.mid"
     midi_file_path = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._3.mid'
-    play_midi(midi_file_path)
+    play_midi(output_path)

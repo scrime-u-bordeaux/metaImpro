@@ -62,7 +62,7 @@ def get_input(transitions, supply, midSymbols):
         history_title = font.render("Historique des notes:", True, (0, 0, 0))
         screen.blit(history_title, (20, 60))
         
-        # Affichage de l'historique (dans l'ordre croissant)
+        # Affichage de l'historique (les 10 dernières entrées)
         y_offset = 100
         for order in sorted(note_history.keys())[-10:]:
             info = note_history[order]
@@ -77,10 +77,10 @@ def get_input(transitions, supply, midSymbols):
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     run = False
-                # Si la touche est dans notre liste et n'est pas déjà appuyée
+                # Si la touche n'est pas déjà appuyée
                 if event.key in key_to_note and event.key not in key_start_time:
                     key_start_time[event.key] = time()
-
+                    
                     # Calcul de la durée effective
                     current_time = time()
                     if last_note_end_time is not None:
@@ -90,15 +90,18 @@ def get_input(transitions, supply, midSymbols):
                         else:
                             duration_eff = last_note_duration
                     else:
-                        duration_eff = last_note_duration  # pour la première note
-
-                    # Génération de la note en passant la durée effective
+                        duration_eff = last_note_duration
+                    
+                    # On prépare une chaîne pour afficher la durée du silence
+                    silence_info = ""
+                    if last_note_end_time is not None and current_time >= last_note_end_time:
+                        silence_info = f" | Silence: {silence:.2f} sec"
+                    
+                    # Génération de la note en utilisant la durée effective
                     new_state, note = generate_note(previous_state, duration_eff, transitions, supply, midSymbols, p=0.7)
-                    # Mise à jour de l'état global pour conserver la continuité de l'improvisation
                     previous_state = new_state
-                    # Jouer la note via FluidSynth
                     fs.noteon(0, note[0], note[2])
-                    note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, Etat {new_state}/{lenSymbols}"
+                    note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}{silence_info}"
                     print(note_info)
                     note_history[note_order] = note_info
                     note_order += 1
@@ -106,26 +109,21 @@ def get_input(transitions, supply, midSymbols):
             
             elif event.type == pygame.KEYUP:
                 if event.key in key_to_note and event.key in key_start_time:
-                    # Calculer la durée d'appui de la touche
                     duration = time() - key_start_time[event.key]
-                    # Arrêter la note correspondante
                     if event.key in note_buffer:
                         state, pitch = note_buffer[event.key]
                         fs.noteoff(0, pitch)
-                        note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, Etat {state}/{lenSymbols}"
+                        note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}"
                         print(note_info)
                         note_history[note_order] = note_info
                         note_order += 1
                         del note_buffer[event.key]
                     del key_start_time[event.key]
-                    
-                    # Mémoriser la fin de la note et sa durée pour le calcul futur
                     last_note_end_time = time()
                     last_note_duration = duration
-                    print(last_note_end_time)
+                    
         pygame.display.flip()
     
-    # Nettoyer
     fs.delete()
     pygame.quit()
 
