@@ -1,12 +1,12 @@
 import factor_oracle as fo
 import random
-
+import numpy as np
 """
 Ce code contient des fonctions pour générer des séquences de notes
 """
 
 
-def generate_sequence_simple(transitions, supply, p=0.8, steps=100):
+def generate_sequence_simple_oracle(transitions, supply, p=0.8, steps=100):
     """
     Génère une séquence aléatoire en suivant les transitions du Factor Oracle.
     - transitions: dict des transitions principales
@@ -40,7 +40,7 @@ def generate_sequence_simple(transitions, supply, p=0.8, steps=100):
 
     return sequence
 
-def generate_sequence_improved(transitions, supply, p=0.8, steps=100):
+def generate_sequence_improved_oracle(transitions, supply, p=0.8, steps=100):
     """
     Génère une séquence aléatoire en suivant les transitions du Factor Oracle.
     - transitions: dict des transitions principales
@@ -84,7 +84,7 @@ def generate_sequence_improved(transitions, supply, p=0.8, steps=100):
 
     return sequence
 
-def generate_note(previous_state, duration, transitions, supply, midSymbols, p=0.8):
+def generate_note_oracle(previous_state, duration, transitions, supply, midSymbols, p=0.8):
     """
     Génère un nouvel état (indice dans l'oracle) et retourne la note associée, qui est un tuple (pitch, duration, velocity).
     La durée passée est utilisée pour choisir la transition la plus cohérente.
@@ -125,3 +125,37 @@ def generate_note(previous_state, duration, transitions, supply, midSymbols, p=0
 
     new_note = (base_symbol[0], duration, base_symbol[2])
     return next_state, new_note
+
+
+def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes) -> int:
+    """
+    Génère le pitch suivant selon une chaîne de Markov construite sur les pitches,
+    représentée par une matrice de transition et une collection de notes.
+
+    Args:
+        previous_pitch (int): pitch de la note précédente.
+        transition_matrix (np.ndarray): matrice (N×N) où entry [i,j] est P(i→j).
+        notes (list[int] or np.ndarray): collection des pitches correspondant aux indices.
+
+    Returns:
+        int: le next_pitch généré.
+    """
+    # Assure-toi d'avoir un array pour la recherche
+    notes_arr = np.array(notes)
+
+    # trouve l’indice du pitch précédent
+    idxs = np.where(notes_arr == previous_pitch)[0]
+    if len(idxs) > 0:
+        idx = int(idxs[0])
+    else:
+        idx = 0  # fallback si le pitch n'est pas dans notes
+
+    row = transition_matrix[idx]
+    if row.sum() > 0:
+        # échantillonnage selon la distribution de la ligne
+        next_idx = np.random.choice(len(row), p=row)
+    else:
+        # fallback uniforme si la ligne est nulle
+        next_idx = np.random.choice(len(row))
+
+    return int(notes_arr[next_idx])

@@ -79,5 +79,6 @@ if __name__ == '__main__':
     midFeatures = extract_features(midFile, "polars")
     midSymbols = create_symbole(midFeatures) 
     transitions, notes = transition_matrix(midSymbols)
+    print(transitions)
     sequence = generate_sequence(notes, transitions)
     sequence_to_midi(sequence)
