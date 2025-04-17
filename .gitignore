@@ -6,11 +6,11 @@ __pycache__/
 *.tmp
 .DS_Store
 Thumbs.db
-
+.gradio
 # Ignore Python-specific files
 *.pyc
 *.pyo
-
+.python-version
 
 # Ignore IDE-specific files
 .vscode/
