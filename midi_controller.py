@@ -42,6 +42,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
 
     # Liste des touches utilisées (les clés du mapping)
     key_to_note = list(keyboard_mapping.keys())
+    note_to_key = list(keyboard_mapping.values())
 
     # Dictionnaires pour mesurer le temps d'appui et mémoriser la note générée
     key_start_time = {}
@@ -56,7 +57,9 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
     # Pour le calcul de la durée effective :
     last_note_end_time = None
     last_note_duration = 0.1  # Valeur par défaut pour la première note
-    
+    # juste avant la boucle :
+    previous_key_index = None
+
     run = True
     while run:
         screen.fill((240, 240, 240))
@@ -83,7 +86,15 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                 # Si la touche n'est pas déjà appuyée
                 if event.key in key_to_note and event.key not in key_start_time:
                     key_start_time[event.key] = time()
-                    
+
+                    #calcul du gap
+                    current_index = keyboard_mapping[event.key]
+                    if previous_key_index is None:
+                        gap = 0
+                    else:
+                        gap = current_index - previous_key_index
+                    previous_key_index = current_index
+
                     # Calcul de la durée effective
                     current_time = time()
                     if last_note_end_time is not None:
@@ -109,23 +120,25 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                         previous_state = new_state
 
                     elif mode == 'markov':
-                        next_pitch = generate_note_markov(previous_pitch, transitions_markov, notes)
+                        next_pitch = generate_note_markov(previous_pitch, transitions_markov, notes, gap)
                         note = (next_pitch, duration_eff, default_velocity)
                         previous_pitch = next_pitch
                         new_state = previous_pitch
 
+                    #activation son de la note
                     new_state = previous_pitch  # pour l’affichage
                     fs.noteon(0, note[0], note[2])
                     if mode =="oracle":
                         note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}{silence_info}"
                         print(note_info)
                     elif mode =="markov":
-                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}{silence_info}"
+                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}{silence_info}, gap {gap}"
                         print(note_info)
                     note_history[note_order] = note_info
                     note_order += 1
                     note_buffer[event.key] = (new_state, note[0])
             
+            #process lorsqu'on relève le doigt du clavier
             elif event.type == pygame.KEYUP:
                 if event.key in key_to_note and event.key in key_start_time:
                     duration = time() - key_start_time[event.key]

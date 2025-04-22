@@ -88,6 +88,13 @@ def generate_note_oracle(previous_state, duration, transitions, supply, midSymbo
     """
     Génère un nouvel état (indice dans l'oracle) et retourne la note associée, qui est un tuple (pitch, duration, velocity).
     La durée passée est utilisée pour choisir la transition la plus cohérente.
+    
+    Args:
+        previous_state (int): indice de la note dans l'oracle des facteurs
+        duration (int): durée effective de l'état (note + silence)
+        transitions (dictionnary): dictionnaire des transitions de l'oracle des facteurs
+        supply (dictionnary): dictionnaire ayant en mémoire la supply function de l'oracle
+        midSymbols (list[int, int,int]): liste de tuples (pitch, duration, velocity)
     """
     next_state = None
     max_state = max(transitions.keys())
@@ -127,23 +134,24 @@ def generate_note_oracle(previous_state, duration, transitions, supply, midSymbo
     return next_state, new_note
 
 
-def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes) -> int:
+def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, gap) -> int:
     """
     Génère le pitch suivant selon une chaîne de Markov construite sur les pitches,
     représentée par une matrice de transition et une collection de notes.
 
     Args:
         previous_pitch (int): pitch de la note précédente.
-        transition_matrix (np.ndarray): matrice (N×N) où entry [i,j] est P(i→j).
+        transition_matrix (np.ndarray): matrice de transition calculé à l'aide de transition_matrix
         notes (list[int] or np.ndarray): collection des pitches correspondant aux indices.
+        gap (int): écart entre les touches appuyées (positif pour monter, négatif pour descendre, zéro pour neutre)
 
     Returns:
         int: le next_pitch généré.
     """
-    # Assure-toi d'avoir un array pour la recherche
+    # o*On transforme notes en array numpy
     notes_arr = np.array(notes)
 
-    # trouve l’indice du pitch précédent
+    # On trouve l’indice du pitch précédent
     idxs = np.where(notes_arr == previous_pitch)[0]
     if len(idxs) > 0:
         idx = int(idxs[0])
@@ -151,9 +159,25 @@ def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes) -
         idx = 0  # fallback si le pitch n'est pas dans notes
 
     row = transition_matrix[idx]
+
     if row.sum() > 0:
-        # échantillonnage selon la distribution de la ligne
-        next_idx = np.random.choice(len(row), p=row)
+        # Filtre selon le gap
+        if gap > 0:
+            mask = notes_arr > previous_pitch
+        elif gap < 0:
+            mask = notes_arr < previous_pitch
+        else:
+            mask = np.ones_like(row, dtype=bool)
+
+        # Applique le masque sur la distribution
+        filtered = row * mask
+        if filtered.sum() > 0:
+            probs = filtered / filtered.sum()
+            next_idx = np.random.choice(len(row), p=probs)
+        else:
+            # Si aucun élément validé par le masque, retombe sur la distribution totale
+            probs = row / row.sum()
+            next_idx = np.random.choice(len(row), p=probs)
     else:
         # fallback uniforme si la ligne est nulle
         next_idx = np.random.choice(len(row))

@@ -1,5 +1,4 @@
-import fluidsynth
-import time
+import random
 
 def generate_note(previous_state, duration, transitions, supply, midSymbols, p=0.8):
     """
