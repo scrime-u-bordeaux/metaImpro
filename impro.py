@@ -183,3 +183,4 @@ def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, g
         next_idx = np.random.choice(len(row))
 
     return int(notes_arr[next_idx])
+
