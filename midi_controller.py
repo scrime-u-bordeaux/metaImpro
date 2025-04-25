@@ -115,7 +115,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                     if mode == 'oracle':
                         new_state, note = generate_note_oracle(
                             previous_state, duration_eff,
-                            transitions_oracle, supply, midSymbols, p=0.7
+                            transitions_oracle, supply, midSymbols, gap,p=0.2
                         )
                         previous_state = new_state
 
@@ -126,10 +126,10 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                         new_state = previous_pitch
 
                     #activation son de la note
-                    new_state = previous_pitch  # pour l’affichage
+ 
                     fs.noteon(0, note[0], note[2])
                     if mode =="oracle":
-                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}{silence_info}"
+                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}{silence_info}, gap {gap}"
                         print(note_info)
                     elif mode =="markov":
                         note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}{silence_info}, gap {gap}"

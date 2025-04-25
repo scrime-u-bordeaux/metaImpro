@@ -84,54 +84,60 @@ def generate_sequence_improved_oracle(transitions, supply, p=0.8, steps=100):
 
     return sequence
 
-def generate_note_oracle(previous_state, duration, transitions, supply, midSymbols, p=0.8):
+
+def generate_note_oracle(previous_state, duration, transitions, supply, midSymbols, gap, p=0.8):
     """
-    Génère un nouvel état (indice dans l'oracle) et retourne la note associée, qui est un tuple (pitch, duration, velocity).
-    La durée passée est utilisée pour choisir la transition la plus cohérente.
-    
-    Args:
-        previous_state (int): indice de la note dans l'oracle des facteurs
-        duration (int): durée effective de l'état (note + silence)
-        transitions (dictionnary): dictionnaire des transitions de l'oracle des facteurs
-        supply (dictionnary): dictionnaire ayant en mémoire la supply function de l'oracle
-        midSymbols (list[int, int,int]): liste de tuples (pitch, duration, velocity)
+    Génère un nouvel état (indice dans l'oracle) et retourne la note associée,
+    qui est un tuple (pitch, duration, velocity).
     """
+    max_state = max(transitions.keys()) if transitions else 0
     next_state = None
-    max_state = max(transitions.keys())
 
     if previous_state in transitions and transitions[previous_state]:
+        # Branche principale (probabilité p) : explorer via factor links
         if random.random() < p:
-            # Sélection parmi les factor links : on choisit celui dont la durée est la plus proche de la note jouée
             candidates = list(transitions[previous_state].values())
-            # Calcule de la différence de durée entre chaque candidat et la durée actuelle
-            closest_state = min(
-                candidates,
-                key=lambda s: abs(midSymbols[s][1] - duration) if s < len(midSymbols) else float('inf')
-            )
-            next_state = closest_state
-        elif previous_state in supply and supply[previous_state] != -1:
-            # Suivre la suffix link
-            next_state = supply[previous_state]
-            if next_state + 1 <= max_state:
-                next_state += 1
+
+            # Filtrer selon le contour (gap)
+            filtered = []
+            curr_pitch = midSymbols[previous_state][0]
+            for s in candidates:
+                if s < len(midSymbols):
+                    next_pitch = midSymbols[s][0]
+                    if (gap > 0 and next_pitch > curr_pitch) or \
+                       (gap < 0 and next_pitch < curr_pitch) or \
+                       (gap == 0):
+                        filtered.append(s)
+
+            if filtered:
+                # choisir la durée la plus proche
+                next_state = min(filtered, key=lambda s: abs(midSymbols[s][1] - duration))
             else:
-                next_state = 0
-
-    # Si aucune transition n'est disponible ou n'a été appliquée
-    if next_state is None:
-        if previous_state + 1 <= max_state:
-            next_state = previous_state + 1
+                # pas de candidat respectant le gap : fallback stochastique parmi tous les factor links
+                next_state = random.choice(candidates)
         else:
-            next_state = 0
+            # Sinon, branche suffix link (supply) puis +1 pour éviter la redondance
+            sl = supply.get(previous_state, None)
+            if sl is not None and sl != -1:
+                # on ajoute +1 et on wrappe
+                if sl + 1 <= max_state:
+                    next_state = sl + 1
+                else:
+                    next_state = 0
+            else:
+                # si pas de suffix link valide, retomber sur les factor links
+                next_state = random.choice(list(transitions[previous_state].values()))
 
-    # Récupérer la note correspondant au nouvel état
-    try:
-        base_symbol = midSymbols[next_state]
-    except IndexError:
-        base_symbol = (60, 0.1, 64)
+    # S'assurer d'un état valide
+    if next_state is None or not (0 <= next_state < len(midSymbols)):
+        # on reste sur le même état si tout échoue
+        next_state = previous_state if 0 <= previous_state < len(midSymbols) else 0
 
-    new_note = (base_symbol[0], duration, base_symbol[2])
+    # Construire et renvoyer la note
+    base = midSymbols[next_state]
+    new_note = (base[0], duration, base[2])
     return next_state, new_note
+
 
 
 def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, gap) -> int:
