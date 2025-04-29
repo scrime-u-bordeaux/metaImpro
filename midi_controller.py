@@ -22,7 +22,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
     pygame.display.set_caption("FluidSynth MIDI Controller")
     
     fs = fluidsynth.Synth()
-    fs.start()
+    fs.start(driver="pulseaudio")
     
     # Charger la SoundFont
     sfid = fs.sfload("/home/sylogue/stage/Roland_SC-88.sf2")
@@ -115,7 +115,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                     if mode == 'oracle':
                         new_state, note = generate_note_oracle(
                             previous_state, duration_eff,
-                            transitions_oracle, supply, midSymbols, gap,p=0.2
+                            transitions_oracle, supply, midSymbols, gap,p=0.8
                         )
                         previous_state = new_state
 
@@ -171,4 +171,4 @@ if __name__ == '__main__':
     midSymbols = create_symbole(midFeatures)   # Liste de tuples (pitch, duration, velocity)
     transitions_oracle, supply = fo.oracle(sequence=midSymbols)
     transitions_markov, notes = transition_matrix(midSymbols)
-    get_input(transitions_oracle, supply, midSymbols,transitions_markov, mode="oracle")
+    get_input(transitions_oracle, supply, midSymbols,transitions_markov, mode="markov")
