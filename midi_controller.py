@@ -9,7 +9,7 @@ import mido
 import fluidsynth
 from markov import transition_matrix
 
-def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="oracle"):
+def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="markov"):
     global previous_state
     previous_state = 0
     default_velocity = 64
@@ -22,7 +22,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
     pygame.display.set_caption("FluidSynth MIDI Controller")
     
     fs = fluidsynth.Synth()
-    fs.start(driver="alsa")
+    fs.start()
     
     # Charger la SoundFont
     sfid = fs.sfload("/home/sylogue/stage/Roland_SC-88.sf2")
@@ -167,7 +167,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
 if __name__ == '__main__':
     # Pipeline de génération des symboles à partir d'un fichier MIDI.
     midFile = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._3.mid'
-    midFeatures = extract_features(midFile, "polars")
+    midFeatures = extract_features(midFile)
     midSymbols = create_symbole(midFeatures)   # Liste de tuples (pitch, duration, velocity)
     transitions_oracle, supply = fo.oracle(sequence=midSymbols)
     transitions_markov, notes = transition_matrix(midSymbols)

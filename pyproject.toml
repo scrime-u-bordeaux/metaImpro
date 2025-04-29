@@ -1,7 +1,7 @@
 [project]
 name = "metaimpro"
 version = "0.1.0"
-description = "Un module qui permet d'émuler un métapiano et d'improviser  avec en utilisant plusieurs modèles différents"
+description = "Un module qui permet d'émuler un métapiano et d'improviser  avec en utilisant plusieurs modèles différents "
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
