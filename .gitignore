@@ -29,4 +29,8 @@ listening.py
 bacasable.py
 
 #ignore notebooks
-/notebooks
+/notebook
+
+#ignore uvconfig
+uv.lock
+pyproject.toml
