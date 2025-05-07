@@ -15,8 +15,9 @@ pip install -r requirements.txt
 
 ## Usage
 To improvise with a midi file of your choice, make sure it is monophonic and then put it in the folder corpus.
-If you want to add a soundfont, modify the name in dpg_interface
+If you want to add a soundfont, modify with the path of the soundfont you added in dpg_interface.
 
+To launch the UI :
 ```bash
 python3 dpg_interface.py
 ```
