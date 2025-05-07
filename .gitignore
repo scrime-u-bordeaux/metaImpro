@@ -18,10 +18,9 @@ Thumbs.db
 .idea/
 
 
-#ignore the dataset or midi files
+#ignore the json
 *.json
-*.midi
-*.mid
+
 
 #ignore test files
 test.py
