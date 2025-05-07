@@ -2,22 +2,78 @@
 
 ## Description
 
-A repository for improvising with the metapiano.
-This creates an UI that allows you to customize some parameters.
+Repository for real-time improvisation on a keyboard using various machine-learning models (Factor Oracle, Markov, etc.) with a flexible UI.
+
+## Features
+- 🎹 Models
+
+    - Factor Oracle
+
+    - Markov model
+
+    - (and more coming soon)
+
+- ⚙️ Customizable parameters via a DearPyGui interface
+
+- 🎶 Corpus selection from a corpus/ folder
+
+## Authors
+
+[Florent DB]https://github.com/FlorentDB
+
+## Dependencies
+
+- This projects requieres python 3.12
+- Dependencies listed in requirements.txt
+
+## Requirements
+ - Python 3.12+
+
+ - Dependencies listed in requirements.txt
+ 
+ - [fluuydsynth]https://github.com/FluidSynth/fluidsynth/wiki/Download
 
 ## Instalation
 
-This code works with python 3.12.
+1. Clone the repository
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/scrime-u-bordeaux/metaImpro.git
+cd metaImpro
 ```
 
-## Usage
-To improvise with a midi file of your choice, make sure it is monophonic and then put it in the folder corpus.
-If you want to add a soundfont, modify with the path of the soundfont you added in dpg_interface.
+2. Create a venv
 
-To launch the UI :
+```bash
+python3.12 -m venv venv
+source venv/bin/activate 
+```
+
+3. Install dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+4. Prepare your corpus
+
+Create a corpus/ folder at the root (it already exists with some examples, add your monophonic .mid files to it)
+
+## Usage
+
+Start the interface:
+
 ```bash
 python3 dpg_interface.py
 ```
+
+Then, in the window:
+
+1. Choose your MIDI device
+
+2. Select a MIDI file from the corpus/
+
+3. Choose your template and its parameters
+
+4. Click Start Jamming
+
