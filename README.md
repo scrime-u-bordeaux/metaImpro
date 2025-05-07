@@ -19,7 +19,7 @@ Repository for real-time improvisation on a keyboard using various machine-learn
 
 ## Authors
 
-[Florent DB]https://github.com/FlorentDB
+[Florent DB](https://github.com/FlorentDB)
 
 ## Dependencies
 
@@ -31,7 +31,7 @@ Repository for real-time improvisation on a keyboard using various machine-learn
 
  - Dependencies listed in requirements.txt
  
- - [fluuydsynth]https://github.com/FluidSynth/fluidsynth/wiki/Download
+ - [fluuydsynth](https://github.com/FluidSynth/fluidsynth/wiki/Download)
 
 ## Instalation
 
