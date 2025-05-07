@@ -1,5 +1,4 @@
 import pygame
-import pygame.midi
 
 from time import time
 from impro import generate_note_oracle, generate_note_markov
@@ -18,7 +17,7 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
     # Initialisation de pygame pour la gestion des événements clavier.
     pygame.init()
     pygame.display.set_mode((200,200))
-    pygame.display.set_mode((800, 400), pygame.RESIZABLE)
+    pygame.display.set_mode((1000, 600), pygame.RESIZABLE)
     pygame.display.set_caption("FluidSynth MIDI Controller")
     
     fs = fluidsynth.Synth()
@@ -113,14 +112,13 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                     
                     # Choix du mode d'improvisation
                     if mode == 'oracle':
-                        new_state, note = generate_note_oracle(
+                        new_state, note, links = generate_note_oracle(
                             previous_state, duration_eff,
-                            transitions_oracle, supply, midSymbols, gap,p=0.8
+                            transitions_oracle, supply, midSymbols, gap,p=0.8, contour=False
                         )
                         previous_state = new_state
-
                     elif mode == 'markov':
-                        next_pitch = generate_note_markov(previous_pitch, transitions_markov, notes, gap)
+                        next_pitch, next_prob, top_probs = generate_note_markov(previous_pitch, transitions_markov, notes, gap, contour=True)
                         note = (next_pitch, duration_eff, default_velocity)
                         previous_pitch = next_pitch
                         new_state = previous_pitch
@@ -128,12 +126,24 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                     #activation son de la note
  
                     fs.noteon(0, note[0], note[2])
-                    if mode =="oracle":
-                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}, État {new_state}/{lenSymbols}{silence_info}, gap {gap}"
+                    if mode == "oracle":
+                        note_info = (
+                            f"KeyDown - {pygame.key.name(event.key)} : "
+                            f"Pitch {note[0]}, Vel {note[2]}, "
+                            f"État {new_state}/{lenSymbols}{silence_info}, gap {gap}, "
+                            f"lien {links}\n"
+                        )
                         print(note_info)
-                    elif mode =="markov":
-                        note_info = f"KeyDown - {pygame.key.name(event.key)} : Pitch {note[0]}, Vel {note[2]}{silence_info}, gap {gap}"
-                        print(note_info)
+                    elif mode == "markov":
+                        probs_str = ", ".join(f"{note} :{prob:.2f}" for note, prob in top_probs)
+                        note_info = (
+                            f"KeyDown - {pygame.key.name(event.key)} : "
+                            f"Pitch {note[0]},prob {next_prob:.2f}, "
+                            f"Vel {note[2]}{silence_info}, gap {gap}, "
+                            f"2 top prob:  {probs_str}"
+                        )
+                    print(note_info)
+
                     note_history[note_order] = note_info
                     note_order += 1
                     note_buffer[event.key] = (new_state, note[0])
@@ -146,10 +156,10 @@ def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="
                         state, pitch = note_buffer[event.key]
                         fs.noteoff(0, pitch)
                         if mode =="oracle":
-                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}"
+                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}\n"
                             print(note_info)
                         elif mode  =="markov":
-                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}"
+                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}\n"
                             print(note_info)
                         note_history[note_order] = note_info
                         note_order += 1

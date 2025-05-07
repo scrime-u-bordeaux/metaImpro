@@ -85,37 +85,51 @@ def generate_sequence_improved_oracle(transitions, supply, p=0.8, steps=100):
     return sequence
 
 
-def generate_note_oracle(previous_state, duration, transitions, supply, midSymbols, gap, p=0.8):
+def generate_note_oracle(previous_state, duration, transitions, supply, midSymbols, gap, p=0.8, contour = True):
     """
-    Génère un nouvel état (indice dans l'oracle) et retourne la note associée,
-    qui est un tuple (pitch, duration, velocity).
+    Args:
+        previous_state (int): état de la note précédente dans le dictionnaire des transitions.
+        duration (int): Durée en seconde de la note précédnte et du silence entre la note précédente et la note suivante
+        transitions (dict[int, dict]): dictionnaire des transitions de l'oracle
+        supply (dict[int, int]) : dictionnaire de la supply function de l'oracle
+        midSymbols (liste[tuple])) : liste des (pictchs, duration, velocity)
+        gap (int): écart entre les touches appuyées (positif pour monter, négatif pour descendre, zéro pour neutre)
+        Contour (bool): Active où non le contour mélodique
+    Returns:
+        int: le next_pitch généré.
     """
     max_state = max(transitions.keys()) if transitions else 0
     next_state = None
-
+    links = None
     if previous_state in transitions and transitions[previous_state]:
         # Branche principale (probabilité p) : explorer via factor links
         if random.random() < p:
+            links= 'factor'
             candidates = list(transitions[previous_state].values())
 
-            # Filtrer selon le contour (gap)
-            filtered = []
-            curr_pitch = midSymbols[previous_state][0]
-            for s in candidates:
-                if s < len(midSymbols):
-                    next_pitch = midSymbols[s][0]
-                    if (gap > 0 and next_pitch > curr_pitch) or \
-                       (gap < 0 and next_pitch < curr_pitch) or \
-                       (gap == 0):
-                        filtered.append(s)
+            if contour:
+                # Filtrer selon le contour (gap)
+                filtered = []
+                curr_pitch = midSymbols[previous_state][0]
+                for s in candidates:
+                    if s < len(midSymbols):
+                        next_pitch = midSymbols[s][0]
+                        if (gap > 0 and next_pitch > curr_pitch) or \
+                           (gap < 0 and next_pitch < curr_pitch) or \
+                           (gap == 0):
+                            filtered.append(s)
 
-            if filtered:
-                # choisir la durée la plus proche
-                next_state = min(filtered, key=lambda s: abs(midSymbols[s][1] - duration))
+                if filtered:
+                    # Choisir la durée la plus proche
+                    next_state = min(filtered, key=lambda s: abs(midSymbols[s][1] - duration))
+                else:
+                    # Aucun filtré => choix aléatoire
+                    next_state = random.choice(candidates)
             else:
                 # pas de candidat respectant le gap : fallback stochastique parmi tous les factor links
                 next_state = random.choice(candidates)
         else:
+            links = 'suffix'
             # Sinon, branche suffix link (supply) puis +1 pour éviter la redondance
             sl = supply.get(previous_state, None)
             if sl is not None and sl != -1:
@@ -130,17 +144,18 @@ def generate_note_oracle(previous_state, duration, transitions, supply, midSymbo
 
     # S'assurer d'un état valide
     if next_state is None or not (0 <= next_state < len(midSymbols)):
+        links = 'fallback'
         # on reste sur le même état si tout échoue
         next_state = previous_state if 0 <= previous_state < len(midSymbols) else 0
 
     # Construire et renvoyer la note
     base = midSymbols[next_state]
     new_note = (base[0], duration, base[2])
-    return next_state, new_note
+    return next_state, new_note, links
 
 
 
-def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, gap) -> int:
+def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, gap, contour = True) -> int:
     """
     Génère le pitch suivant selon une chaîne de Markov construite sur les pitches,
     représentée par une matrice de transition et une collection de notes.
@@ -150,43 +165,54 @@ def generate_note_markov(previous_pitch, transition_matrix: np.ndarray, notes, g
         transition_matrix (np.ndarray): matrice de transition calculé à l'aide de transition_matrix
         notes (list[int] or np.ndarray): collection des pitches correspondant aux indices.
         gap (int): écart entre les touches appuyées (positif pour monter, négatif pour descendre, zéro pour neutre)
-
+        Contour (bool): Active où non le contour mélodique
     Returns:
-        int: le next_pitch généré.
+        next_pitch (int): le pitch généré.
+        next_prob (float): probabilité associée à ce pitch dans la distribution utilisée.
+        top_probs (list of tuples): les deux notes les plus probables sous forme [(note1, prob1), (note2, prob2)].
     """
-    # o*On transforme notes en array numpy
+    # On transforme notes en array numpy
     notes_arr = np.array(notes)
 
     # On trouve l’indice du pitch précédent
     idxs = np.where(notes_arr == previous_pitch)[0]
-    if len(idxs) > 0:
-        idx = int(idxs[0])
-    else:
-        idx = 0  # fallback si le pitch n'est pas dans notes
+    idx = int(idxs[0]) if len(idxs) > 0 else 0
 
     row = transition_matrix[idx]
 
     if row.sum() > 0:
-        # Filtre selon le gap
-        if gap > 0:
-            mask = notes_arr > previous_pitch
-        elif gap < 0:
-            mask = notes_arr < previous_pitch
+        # Détermination du masque selon contour
+        if contour:
+            if gap > 0:
+                mask = notes_arr > previous_pitch
+            elif gap < 0:
+                mask = notes_arr < previous_pitch
+            else:
+                mask = np.ones_like(row, dtype=bool)
         else:
+            # Sans contour => tous valides
             mask = np.ones_like(row, dtype=bool)
 
         # Applique le masque sur la distribution
         filtered = row * mask
         if filtered.sum() > 0:
             probs = filtered / filtered.sum()
-            next_idx = np.random.choice(len(row), p=probs)
         else:
-            # Si aucun élément validé par le masque, retombe sur la distribution totale
-            probs = row / row.sum()
-            next_idx = np.random.choice(len(row), p=probs)
-    else:
-        # fallback uniforme si la ligne est nulle
-        next_idx = np.random.choice(len(row))
+            # fallback uniforme si pas de transitions
+            probs = np.ones_like(row) / row.size
 
-    return int(notes_arr[next_idx])
+    # Sélectionne un index selon la distribution
+    next_idx = np.random.choice(probs.size, p=probs)
+
+    # Détermine les valeurs de retour
+    next_pitch = int(notes_arr[next_idx])
+    next_prob = float(probs[next_idx])
+
+    # Identifie les 2 meilleures probabilités
+    sorted_idx = np.argsort(row)[::-1]
+    top_idx = sorted_idx[:4] if sorted_idx.size >= 4 else sorted_idx
+    total = row.sum() if row.sum() > 0 else 1.0
+    top_probs = [(int(notes_arr[i]), float(row[i] / total)) for i in top_idx]
+
+    return next_pitch, next_prob, top_probs
 

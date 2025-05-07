@@ -21,3 +21,8 @@ Thumbs.db
 *.json
 *.midi
 *.mid
+
+#ignore test files
+test.py
+listening.py
+bacasable.py
