@@ -28,6 +28,12 @@ def get_corpus():
         return []
     return [f for f in files if f.lower().endswith('.mid')]
 
+def append_log_entry(msg: str):
+    history = dpg.get_value("note_log")
+    history = history[-9:] if history else []
+    history.append(msg)
+    dpg.set_value("note_log", history)
+    
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag =user_data
     if app_data == 'oracle':
@@ -39,6 +45,7 @@ def on_model_change(sender, app_data, user_data):
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
+
 
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
@@ -63,8 +70,9 @@ def on_launch(sender, app_data):
     device = dpg.get_value('device_combo')
     corpus_file = dpg.get_value('corpus_combo')
     p_value = dpg.get_value('oracle_slider') if dpg.is_item_shown('oracle_slider') else None
-    markov_order = dpg.get_value('markov_combo') if dpg.is_item_shown('markov_combo') else None
-    
+    markov_order = dpg.get_value('markov_combo') if dpg.is_item_shown('markov_combo') else 1 #mettre  à un sinon la fonction vlmc_table bug pour créer la table de transition 
+    markov_order = int(markov_order) #on cast un int car c'est un str
+
     # Construction du chemin complet du corpus
     corpus_path = os.path.join(CORPUS_FOLDER, corpus_file)
 
@@ -121,8 +129,8 @@ with dpg.window(label='Sélection du device', width=1200, height=400):
         # Combo Markov
         dpg.add_combo(
             tag='markov_combo',
-            items= ['Ordre 1', 'Ordre 2', 'Ordre 3', 'Variable Length'],
-            default_value='Ordre 1',
+            items= [1, 2, 3],
+            default_value=1,
             label="Choisissez l'Ordre",
             width=200,
 
@@ -146,6 +154,11 @@ with dpg.window(label='Sélection du device', width=1200, height=400):
     with dpg.group(horizontal=True):
         dpg.add_button(label='Commencer à Improviser', callback=on_launch)
         dpg.add_text("", tag='summary_text')  # widget de résumé à droite
+
+    dpg.add_spacer(height=10)
+
+    dpg.add_text("Historique des notes :")
+    dpg.add_listbox(tag="note_log", items=[], width=800, num_items=10)
 
 dpg.create_viewport(title='MetaImpro', width=1200, height=600)
 dpg.setup_dearpygui()

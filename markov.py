@@ -1,107 +1,86 @@
-# Création d'une chaine de Markov d'ordre 1 sur les pitches d'un fichier midi
-
 import numpy as np
-from create_symbols import extract_features, create_symbole
-import mido
+from collections import defaultdict
 
-def transition_matrix(midSymbols, mode='pitch'):
+def build_vlmc_table(midSymbols, max_order=3):
     """
-    Calcule la matrice de transition de Markov selon le mode sélectionné.
+    Construit une table de transition pour une chaîne de Markov à longueur variable.
 
     Args:
-        midSymbols (list of tuples): Liste de tuples (pitch, duration, velocity).
-        mode (str): Mode de transition : 'pitch', 'pitch_duration', ou 'full'.
+        midSymbols (list of tuples): Séquence de notes (pitches, duration, velocity).
+        max_order (int): Ordre maximal du contexte (par défaut 3).
 
     Returns:
-        transition_matrix (np.array): Matrice de transition normalisée.
-        states (list): Liste des états uniques.
+        dict: Table de transition sous forme de dictionnaire.
     """
+    sequence = [s[0] for s in midSymbols]
+    table = defaultdict(lambda: defaultdict(int))
+    for i in range(len(sequence)):
+        for order in range(1, max_order + 1):
+            if i - order < 0:
+                continue
+            context = tuple(sequence[i - order:i])
+            next_note = sequence[i]
+            table[context][next_note] += 1
+    return table
+
+def generate_note_vlmc(previous_notes, vlmc_table, notes, gap, contour=True, max_order=3):
+    """
+    Génère la note suivante en utilisant une chaîne de Markov à longueur variable à  partir de la note précédente.
+
+    Args:
+        previous_notes (list of int): Notes précédentes (historique).
+        vlmc_table (dict): Table de transition VLMC.
+        notes (list of int): Liste des notes possibles.
+        gap (int): Écart entre les touches appuyées (positif pour monter, négatif pour descendre, zéro pour neutre).
+        contour (bool): Active ou non le contour mélodique.
+        max_order (int): Ordre maximal du contexte.
+
+    Returns:
+        tuple: (next_pitch, next_prob, top_probs)
+    """
+    notes_arr = np.array(notes)
+    context = tuple(previous_notes[-max_order:]) if previous_notes else ()
     
-    if mode == 'pitch':
-        sequence = [s[0] for s in midSymbols]
-    elif mode == 'pitch_duration':
-        sequence = [(s[0], s[1]) for s in midSymbols]
-    elif mode == 'full':
-        sequence = midSymbols
+    # Recherche du contexte le plus long possible
+    for order in range(len(context), 0, -1):
+        sub_context = context[-order:]
+        if sub_context in vlmc_table:
+            next_notes_dict = vlmc_table[sub_context]
+            break
     else:
-        raise ValueError("Mode invalide. Utilise 'pitch', 'pitch_duration' ou 'full'.")
+        # Si aucun contexte trouvé, sélection aléatoire uniforme
+        next_pitch = int(np.random.choice(notes_arr))
+        return next_pitch, 1.0 / len(notes_arr), [(next_pitch, 1.0 / len(notes_arr))]
 
-    # Obtenir les états uniques
-    states = np.unique(sequence, axis=0)
-    
-    # Créer le dictionnaire de mapping
-    state_to_index = {tuple(state) if isinstance(state, (list, np.ndarray)) else state: i for i, state in enumerate(states)}
-    
-    # Initialiser la matrice
-    matrix = np.zeros((len(states), len(states)))
+    # Construction de la distribution de probabilité
+    next_notes = list(next_notes_dict.keys())
+    counts = np.array([next_notes_dict[n] for n in next_notes])
+    probs = counts / counts.sum()
 
-    # Compter les transitions
-    for i in range(len(sequence) - 1):
-        current = tuple(sequence[i]) if isinstance(sequence[i], (list, tuple)) else sequence[i]
-        next_ = tuple(sequence[i + 1]) if isinstance(sequence[i + 1], (list, tuple)) else sequence[i + 1]
-        matrix[state_to_index[current], state_to_index[next_]] += 1
+    # Application du contour mélodique si activé
+    if contour and previous_notes:
+        last_pitch = previous_notes[-1]
+        if gap > 0:
+            mask = np.array(next_notes) > last_pitch
+        elif gap < 0:
+            mask = np.array(next_notes) < last_pitch
+        else:
+            mask = np.ones_like(probs, dtype=bool)
+        if mask.any():
+            probs = probs[mask]
+            probs = probs / probs.sum() #renormalisation
+            next_notes = np.array(next_notes)[mask]
+        else:
+            # Si aucune note ne respecte le contour, fallback uniforme
+            next_pitch = int(np.random.choice(notes_arr))
+            return next_pitch, 1.0 / len(notes_arr), [(next_pitch, 1.0 / len(notes_arr))]
 
-    # Normaliser la matrice
-    row_sums = matrix.sum(axis=1, keepdims=True)
-    transition_matrix = np.divide(matrix, row_sums, out=np.zeros_like(matrix), where=row_sums != 0)
+    # Sélection de la note suivante
+    next_pitch = int(np.random.choice(next_notes, p=probs))
+    next_prob = float(probs[np.where(next_notes == next_pitch)[0][0]])
 
-    return transition_matrix, states
+    # Identification des 2 notes les plus probables
+    top_indices = np.argsort(probs)[::-1][:2]
+    top_probs = [(int(next_notes[i]), float(probs[i])) for i in top_indices]
 
-
-def generate_sequence(notes, transitions_matrix, length=100, start_note=None, duration = 150):
-
-    if start_note is None:
-        current_state = np.random.choice(notes)
-    else:
-        current_state = start_note
-
-    sequence = []
-
-    # Dictionnaires pour mapper chaque note à un index
-    note_to_index = {note: index for index, note in enumerate(notes)}
-    index_to_note = {index: note for note, index in note_to_index.items()}
-
-    for _ in range(length):
-        # Ajouter le pitch actuel et la durée fixe à la séquence
-        sequence.append((current_state, duration))
-
-        # Sélectionner le prochain état en fonction des probabilités de transition
-        current_index = note_to_index[current_state]
-        next_index = np.random.choice(len(notes), p=transitions_matrix[current_index])
-        current_state = index_to_note[next_index]
-
-    return sequence
-
-def sequence_to_midi(sequence, output_file='output_markov.mid'):
-    """
-    Création d'un fichier MIDI à partir de la séquence générée.
-    
-    Paramètres:
-      sequence (list of tuples): Liste de tuples (pitch, duration) de la séquence générée.
-      output_file (str): Nom du fichier de sortie.
-    """
-    # Création d'un nouveau fichier MIDI et d'une piste
-    mid = mido.MidiFile()
-    track = mido.MidiTrack()
-    mid.tracks.append(track)
-    
-    for pitch, duration in sequence:
-        # Note on : time=0 pour démarrer immédiatement après la note précédente
-        note_on = mido.Message('note_on', note=pitch, velocity=80, time=0)
-        track.append(note_on)
-        # Note off : le temps correspond à la durée de la note
-        note_off = mido.Message('note_off', note=pitch, velocity=0, time=duration)
-        track.append(note_off)
-    
-    mid.save(output_file)
-
-
-if __name__ == '__main__':
-    # Pipeline de génération des symboles à partir d'un fichier MIDI.
-    midFile = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._3.mid'
-    midFeatures = extract_features(midFile, "polars")
-    midSymbols = create_symbole(midFeatures) 
-    transitions, notes = transition_matrix(midSymbols)
-    print(transitions)
-    sequence = generate_sequence(notes, transitions)
-    sequence_to_midi(sequence)
+    return next_pitch, next_prob, top_probs
