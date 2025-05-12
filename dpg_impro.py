@@ -20,7 +20,6 @@ KEYBOARD_MAPPING = {
 _impro_thread = None
 _stop_event = None
 
-
 def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 50):
     """
     Initialise FluidSynth avec la SoundFont spécifiée.

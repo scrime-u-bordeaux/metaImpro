@@ -10,7 +10,7 @@ CORPUS_FOLDER = 'corpus'
 # Variables globales pour gérer le thread d'impro
 _impro_thread = None
 _stop_event = None
-
+note_history = []
 
 def get_device():
     return mido.get_input_names()
@@ -29,11 +29,11 @@ def get_corpus():
     return [f for f in files if f.lower().endswith('.mid')]
 
 def append_log_entry(msg: str):
-    history = dpg.get_value("note_log")
-    history = history[-9:] if history else []
-    history.append(msg)
-    dpg.set_value("note_log", history)
-    
+    global note_history
+    note_history = note_history[-10:]  # garde seulement les 9 derniers si nécessaire
+    note_history.append(msg)
+    dpg.configure_item("note_log", items=note_history)
+
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag =user_data
     if app_data == 'oracle':
@@ -86,7 +86,7 @@ def on_launch(sender, app_data):
     }
 
     # Lancement du thread d'impro
-    run_impro(config)
+    run_impro(config, append_log_entry)
 
 
 
@@ -158,7 +158,7 @@ with dpg.window(label='Sélection du device', width=1200, height=400):
     dpg.add_spacer(height=10)
 
     dpg.add_text("Historique des notes :")
-    dpg.add_listbox(tag="note_log", items=[], width=800, num_items=10)
+    dpg.add_listbox(tag="note_log", items=[], width=1000, num_items=10)
 
 dpg.create_viewport(title='MetaImpro', width=1200, height=600)
 dpg.setup_dearpygui()
