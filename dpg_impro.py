@@ -57,7 +57,7 @@ def load_symbols_from_midi(midi_path: str, markov_order: int = 1):
     return mid_symbols, trans_oracle, supply, vlmc_table, notes
 
 
-def handle_keydown(event, state, config, synth, history, last_times):
+def handle_keydown(event, state, config, synth, history, last_times, log_callback=None):
     """
     Gère un événement KEYDOWN pour générer et jouer une note d'improvisation.
 
@@ -94,6 +94,8 @@ def handle_keydown(event, state, config, synth, history, last_times):
             p=config['p'], contour=False
         )
         state['prev_state'] = new_state
+        if log_callback:
+            log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
     else:
         # Markov: contexte variable
         next_pitch, next_prob, top_probs = generate_note_vlmc(
@@ -146,7 +148,7 @@ def handle_keyup(event, state, synth, history, last_times):
     # Retirer le start
     del last_times['key_start'][event.key]
 
-def handle_keydown_midi(note_index, velocity, state, config, synth, history, last_times):
+def handle_keydown_midi(note_index, velocity, state, config, synth, history, last_times, log_callback=None):
     """
     Gère un événement note_on MIDI pour générer et jouer une note d'improvisation.
 
@@ -182,6 +184,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             p=config['p'], contour=False
         )
         state['prev_state'] = new_state
+        if log_callback:
+            log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
     else:
         # Markov: contexte variable
         next_pitch, next_prob, top_probs = generate_note_vlmc(
@@ -239,24 +243,6 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     # Retirer le start
     del last_times['key_start'][note_index]
 
-def midi_listener(config, state, synth, history, last_times):
-    """
-    Gère les note_on et note_off d'un clavier midi
-
-    Args:
-        config (dict): Configuration contenant 'mode', 'device', 'corpus', 'p', 'markov_order', 'sf2_path'.
-        stop_event (threading.Event): Événement pour arrêter la boucle.
-    Returns:
-        None
-    """
-    port = config['device']
-    for msg in port:
-        if msg.type == 'note_on' and msg.velocity > 0:
-            note_index = msg.note
-            handle_keydown_midi(note_index, msg.velocity, state, config, synth, history, last_times)
-        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-            note_index = msg.note
-            handle_keyup_midi(note_index, state, synth, history, last_times)
     
 def improvisation_loop(config, stop_event, log_callback=None):
 
@@ -300,7 +286,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     stop_event.set()
                 elif ev.type == pygame.KEYDOWN and ev.key in KEYBOARD_MAPPING:
                     last_times['key_start'][ev.key] = time()
-                    handle_keydown(ev, state, config, synth, history, last_times)
+                    handle_keydown(ev, state, config, synth, history, last_times, log_callback)
                 elif ev.type == pygame.KEYUP and ev.key in last_times['key_start']:
                     handle_keyup(ev, state, synth, history, last_times)
         pygame.quit()
@@ -313,7 +299,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                 if stop_event.is_set():
                     break
                 if msg.type == 'note_on' and msg.velocity > 0:
-                    handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times)
+                    handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
                 elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                     handle_keyup_midi(msg.note, state, synth, history, last_times)
             midi_port.close()

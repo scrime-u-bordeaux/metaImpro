@@ -30,9 +30,29 @@ def get_corpus():
 
 def append_log_entry(msg: str):
     global note_history
+
+     # Message spécial pour la barre de progression
+    if msg.startswith("__progress__"):
+        try:
+            _, state, total = msg.split(":")
+            update_oracle_progress(int(state), int(total))
+        except:
+            pass
+        return
+    
     note_history = note_history[-10:]  # garde seulement les 9 derniers si nécessaire
     note_history.append(msg)
     dpg.configure_item("note_log", items=note_history)
+
+
+def update_oracle_progress(current_state, total_states):
+    """
+    Met à jour dynamiquement la barre pour afficher l’état courant.
+    """
+    if total_states > 1:
+        progress = current_state / (total_states - 1)
+        dpg.set_value("oracle_progress", progress)
+
 
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag =user_data
@@ -92,7 +112,7 @@ def on_launch(sender, app_data):
 
 dpg.create_context()
 
-with dpg.window(label='Sélection du device', width=1200, height=400):
+with dpg.window(label='Sélection du device', width=1200, height=800):
     dpg.add_text("Choisissez un device")
     with dpg.group(horizontal=True):
 
@@ -159,6 +179,11 @@ with dpg.window(label='Sélection du device', width=1200, height=400):
 
     dpg.add_text("Historique des notes :")
     dpg.add_listbox(tag="note_log", items=[], width=1000, num_items=10)
+
+    dpg.add_spacer(height=10)
+
+    dpg.add_text("Progression dans l'oracle :")
+    dpg.add_progress_bar(tag="oracle_progress", default_value=0.0, width=800)
 
 dpg.create_viewport(title='MetaImpro', width=1200, height=600)
 dpg.setup_dearpygui()
