@@ -4,7 +4,7 @@ import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
 import os
 
-model_list = ['oracle', 'markov', 'SuperTransformerDiffuseurLSTM']
+model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
 CORPUS_FOLDER = 'corpus'
 
 # Variables globales pour gérer le thread d'impro
@@ -55,16 +55,19 @@ def update_oracle_progress(current_state, total_states):
 
 
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag =user_data
+    slider_tag, markov_tag, progress_tag =user_data
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
         dpg.hide_item(markov_tag)
+        dpg.show_item(progress_tag)
     elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
+        dpg.hide_item(progress_tag)
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
+        dpg.hide_item(progress_tag)
 
 
 # callback pour afficher et récupérer les paramètres
@@ -143,13 +146,13 @@ with dpg.window(label='Sélection du device', width=1200, height=800):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider', 'markov_combo')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider', 'markov_combo', 'oracle_progress')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
         dpg.add_combo(
             tag='markov_combo',
-            items= [1, 2, 3],
+            items= [0, 1, 2, 3],
             default_value=1,
             label="Choisissez l'Ordre",
             width=200,
@@ -183,7 +186,12 @@ with dpg.window(label='Sélection du device', width=1200, height=800):
     dpg.add_spacer(height=10)
 
     dpg.add_text("Progression dans l'oracle :")
-    dpg.add_progress_bar(tag="oracle_progress", default_value=0.0, width=800)
+    dpg.add_progress_bar(tag="oracle_progress",
+        default_value=0.0,
+        width=800,
+        user_data=('oracle_slider', 'markov_combo', 'oracle_progress')
+        )
+
 
 dpg.create_viewport(title='MetaImpro', width=1200, height=600)
 dpg.setup_dearpygui()

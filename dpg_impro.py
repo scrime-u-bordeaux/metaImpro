@@ -5,6 +5,8 @@ from create_symbols import extract_features, create_symbole
 import mido
 import fluidsynth
 from markov import build_vlmc_table, generate_note_vlmc
+import random
+import numpy as np
 
 import pygame
 import threading
@@ -20,7 +22,7 @@ KEYBOARD_MAPPING = {
 _impro_thread = None
 _stop_event = None
 
-def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 50):
+def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     """
     Initialise FluidSynth avec la SoundFont spécifiée.
 
@@ -54,7 +56,8 @@ def load_symbols_from_midi(midi_path: str, markov_order: int = 1):
     trans_oracle, supply = fo.oracle(sequence=mid_symbols)
     vlmc_table = build_vlmc_table(mid_symbols, max_order=markov_order)
     notes = sorted({s[0] for s in mid_symbols})
-    return mid_symbols, trans_oracle, supply, vlmc_table, notes
+    pitches = np.unique([s[0] for s in mid_symbols])
+    return mid_symbols, trans_oracle, supply, vlmc_table, notes, pitches
 
 
 def handle_keydown(event, state, config, synth, history, last_times, log_callback=None):
@@ -186,7 +189,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         state['prev_state'] = new_state
         if log_callback:
             log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
-    else:
+
+    elif config['mode'] == 'markov':
         # Markov: contexte variable
         next_pitch, next_prob, top_probs = generate_note_vlmc(
             state['context'], state['vlmc_table'], state['notes'],
@@ -199,7 +203,10 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if max_ord > 0 and len(state['context']) > max_ord:
             state['context'] = state['context'][-max_ord:]
         note = (next_pitch, dur_eff, velocity)
-
+        
+    elif config['mode'] == 'random':
+        pitch = random.choice(state['unique_pitches'])
+        note = (pitch, dur_eff, velocity)
 
     # Jouer la note
     synth.noteon(0, note[0], note[2])
@@ -255,7 +262,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         history.append(msg)
 
 
-    mid_symbols, trans_oracle, supply, vlmc_table, notes = load_symbols_from_midi(
+    mid_symbols, trans_oracle, supply, vlmc_table, notes, unique_pitches = load_symbols_from_midi(
         config['corpus'], markov_order=config['markov_order']
     )
     state = {
@@ -266,6 +273,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         'supply': supply,
         'vlmc_table': vlmc_table,
         'notes': notes,
+        'unique_pitches': unique_pitches,
         'note_buffer': {}
     }
 
