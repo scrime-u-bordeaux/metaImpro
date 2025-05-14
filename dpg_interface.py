@@ -1,5 +1,4 @@
 import mido
-import threading
 import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
 import os
@@ -40,6 +39,16 @@ def append_log_entry(msg: str):
             pass
         return
     
+    if msg.startswith("__markov_probs__"):
+        try:
+            _, chosen_pitch_str, probs_str = msg.split(":", 2)
+            chosen_pitch = int(chosen_pitch_str)
+            top_probs = eval(probs_str)  # ex: [(60, 0.5), (62, 0.5)]
+            update_pie_chart(top_probs, chosen_pitch)
+        except Exception as e:
+            print(f"Erreur parsing bar chart: {e}")
+        return
+    
     note_history = note_history[-10:]  # garde seulement les 9 derniers si nécessaire
     note_history.append(msg)
     dpg.configure_item("note_log", items=note_history)
@@ -54,20 +63,93 @@ def update_oracle_progress(current_state, total_states):
         dpg.set_value("oracle_progress", progress)
 
 
+def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chosen_tag="chosen_pie"):
+    """
+    Met à jour le graphique avec les probabilités des notes sous forme de camembert.
+    """
+    if not top_probs:
+        return
+
+    probs = [p[1] for p in top_probs]  # probabilités
+    pitches = [p[0] for p in top_probs]  # numéros de pitch
+
+    # on créé des labels avec pitch  + la proba de la note
+    pitch_labels = []
+    pitch_labels = [f"{pitch} : {prob:.2f}" for pitch, prob in top_probs]
+
+    try:
+        # Vérifier si l'axe Y existe déjà, sinon le créer
+        y_axis_id = "y_axis_markov"
+
+        # Supprimer l'ancienne série de données
+        if dpg.does_item_exist(bar_tag):
+            dpg.delete_item(bar_tag)
+
+        # Si l'axe Y existe, on le nettoie
+        if dpg.does_item_exist(y_axis_id):
+            dpg.delete_item(y_axis_id)
+
+        # Récupérer la référence à l'axe X - il devrait déjà être créé
+        x_axis_tag = "x_axis_markov"
+
+        # Créer un nouvel axe Y pour le graphique
+        with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True,
+                           no_tick_marks=True, no_tick_labels=True, tag=y_axis_id):
+            dpg.set_axis_limits(y_axis_id, 0, 1)
+
+            # Création du camembert avec les nouvelles données
+            dpg.add_pie_series(
+                0.5, 0.5,         # centre x, y
+                0.4,              # rayon
+                probs,            # valeurs (proportions)
+                pitch_labels,     # étiquettes
+                tag=bar_tag,      # identifiant pour référence future
+                parent=y_axis_id,
+                normalize=True
+            )
+        
+        # Mettre à jour le texte descriptif
+        if dpg.does_item_exist("markov_info_text"):
+            # Trouver l'index de la note choisie dans les probas
+            chosen_idx = -1
+            for i, pitch in enumerate(pitches):
+                if pitch == chosen_pitch:
+                    chosen_idx = i
+                    break
+
+            if chosen_idx >= 0:
+                chosen_prob = probs[chosen_idx]
+                chosen_note = pitch_labels[chosen_idx]
+                dpg.set_value("markov_info_text", f"Note choisie: {chosen_note} (prob: {chosen_prob:.2f})")
+            else:
+                dpg.set_value("markov_info_text", f"Note choisie: {chosen_pitch} (non représentée dans le top)")
+        
+    except Exception as e:
+        print(f"Erreur update pie chart: {e}")
+        
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag =user_data
+    slider_tag, markov_tag, progress_tag = user_data
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
         dpg.hide_item(markov_tag)
         dpg.show_item(progress_tag)
+        dpg.hide_item("markov_plot")
+        dpg.show_item("oracle_text")
+        dpg.hide_item("markov_text")
     elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
+        dpg.show_item("markov_plot")
+        dpg.hide_item("oracle_text")
+        dpg.show_item("markov_text")
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
         dpg.hide_item(progress_tag)
+        dpg.hide_item("markov_plot")
+        dpg.hide_item("oracle_text")
+        dpg.hide_item("markov_text")
 
 
 # callback pour afficher et récupérer les paramètres
@@ -115,7 +197,7 @@ def on_launch(sender, app_data):
 
 dpg.create_context()
 
-with dpg.window(label='Sélection du device', width=1200, height=800):
+with dpg.window(label='Sélection du device', width=1200, height=1200):
     dpg.add_text("Choisissez un device")
     with dpg.group(horizontal=True):
 
@@ -185,21 +267,40 @@ with dpg.window(label='Sélection du device', width=1200, height=800):
 
     dpg.add_spacer(height=10)
 
-    dpg.add_text("Progression dans l'oracle :")
+    # Slider progression Oracle
+    dpg.add_text("Progression dans l'oracle :", tag="oracle_text")
     dpg.add_progress_bar(tag="oracle_progress",
         default_value=0.0,
         width=800,
         user_data=('oracle_slider', 'markov_combo', 'oracle_progress')
         )
 
+    # Camembert Markov
+    dpg.add_text("Camembert des pitchs + probas :", tag="markov_text", show=False)
+    with dpg.plot(label="Probas Markov", height=400, width=500, show=False, tag="markov_plot"):
+        dpg.add_plot_legend()
 
-dpg.create_viewport(title='MetaImpro', width=1200, height=600)
+        # create x axis
+        dpg.add_plot_axis(dpg.mvXAxis, label="", no_gridlines=True, no_tick_marks=True, no_tick_labels=True)
+        dpg.set_axis_limits(dpg.last_item(), 0, 1)
+        
+        # Création de l'axe Y initial avec une série vide
+        with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True, no_tick_marks=True, no_tick_labels=True):
+            dpg.set_axis_limits(dpg.last_item(), 0, 1)
+            # Série initiale d'exemple
+            dpg.add_pie_series(
+                x=1,
+                y=1,
+                radius=1,
+                values=[0.6, 0.3, 0.1],
+                labels= ["pitch_1 : probs_1", "pitch_2 : probs_2", "pitch_3 : probs_3"],
+            )
+    dpg.add_text(tag="markov_info_text")
+
+# Création fenêtre
+dpg.create_viewport(title='MetaImpro', width=1200, height=850)
 dpg.setup_dearpygui()
-
-
-
 dpg.show_viewport()
-
 dpg.start_dearpygui()
 dpg.destroy_context()
 

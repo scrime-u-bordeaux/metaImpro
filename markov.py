@@ -76,11 +76,12 @@ def generate_note_vlmc(previous_notes, vlmc_table, notes, gap, contour=True, max
             return next_pitch, 1.0 / len(notes_arr), [(next_pitch, 1.0 / len(notes_arr))]
 
     # Sélection de la note suivante
+    next_notes = np.array(next_notes)
     next_pitch = int(np.random.choice(next_notes, p=probs))
     next_prob = float(probs[np.where(next_notes == next_pitch)[0][0]])
 
-    # Identification des 2 notes les plus probables
-    top_indices = np.argsort(probs)[::-1][:2]
+    max_top = min(4, len(next_notes))
+    top_indices = np.argsort(probs)[::-1][:max_top]
     top_probs = [(int(next_notes[i]), float(probs[i])) for i in top_indices]
 
     return next_pitch, next_prob, top_probs

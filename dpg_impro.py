@@ -99,7 +99,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         state['prev_state'] = new_state
         if log_callback:
             log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
-    else:
+
+    elif config['mode'] == 'markov':
         # Markov: contexte variable
         next_pitch, next_prob, top_probs = generate_note_vlmc(
             state['context'], state['vlmc_table'], state['notes'],
@@ -112,7 +113,12 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         if max_ord > 0 and len(state['context']) > max_ord:
             state['context'] = state['context'][-max_ord:]
         note = (next_pitch, dur_eff, 64)
-
+        if log_callback and top_probs:
+            log_callback(f"__markov_probs__:{next_pitch}:{top_probs}")
+            
+    elif config['mode'] == 'random':
+        pitch = random.choice(state['unique_pitches'])
+        note = (pitch, dur_eff, 80)
 
     # Jouer note
     synth.noteon(0, note[0], note[2])
@@ -120,6 +126,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
     log(
         f"KD {pygame.key.name(event.key)} -> pitch {note[0]}, vel {note[2]}, dur_eff {dur_eff:.2f}, gap {gap}"
     )
+
 
 
 def handle_keyup(event, state, synth, history, last_times):
@@ -203,7 +210,10 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if max_ord > 0 and len(state['context']) > max_ord:
             state['context'] = state['context'][-max_ord:]
         note = (next_pitch, dur_eff, velocity)
-        
+
+        if log_callback and top_probs:
+            log_callback(f"__markov_probs__:{next_pitch}:{top_probs}")
+
     elif config['mode'] == 'random':
         pitch = random.choice(state['unique_pitches'])
         note = (pitch, dur_eff, velocity)
