@@ -59,7 +59,7 @@ def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 
     transitions = trans[similarity_level]
     supply = sup[similarity_level]
     # Markov
-    vlmc_table = build_vlmc_table(symbols, max_order=markov_order)
+    vlmc_table = build_vlmc_table(symbols, max_order=markov_order, similarity_level=similarity_level)
     all_keys    = list({symbol_to_key(s) for s in symbols})
 
      # Extraction des hauteurs uniques pour le mode random
@@ -87,7 +87,7 @@ def get_unique_pitches(symbols):
     return unique_symbols
 
 
-def normalize_note(note, dur_eff=None, default_velocity=80):
+def normalize_note(note, dur_eff=None, default_velocity=120):
     """
     Turn any of:
       - an int (oracle single note)
@@ -167,11 +167,13 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
     elif config['mode'] == 'markov':
         # Markov: contexte variable
         sym, next_prob, top_probs = generate_symbol_vlmc(
-            state['symbol_history'],
-            state['vlmc_table'],
-            state['notes'],
-            gap,
-            contour=True
+        previous_symbols   = state['symbol_history'],
+        vlmc_table         = state['vlmc_table'],
+        all_keys           = state['notes'],
+        max_order          = config['markov_order'],
+        gap                = gap,
+        contour            = False,
+        similarity_level= config['sim_lvl']
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -182,8 +184,11 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             state['symbol_history'].pop(0)
             state['pitch_history'].pop(0)
         raw_note = sym
+
         if log_callback and top_probs:
-            log_callback(f"__markov_probs__:{sym}:{top_probs}")
+            chosen = sym['pitch']
+            flat = [(s['pitch'], p) for s,p in top_probs]
+            log_callback(f"__markov_probs__:{chosen}:{flat}")
             
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
@@ -276,10 +281,13 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     elif config['mode'] == 'markov':
         # Markov: contexte variable
         sym, next_prob, top_probs = generate_symbol_vlmc(
-            state['symbol_history'],
-            state['vlmc_table'],
-            state['notes'],
-            gap, contour=True
+        previous_symbols   = state['symbol_history'],
+        vlmc_table         = state['vlmc_table'],
+        all_keys           = state['notes'],
+        max_order          = config['markov_order'],
+        gap                = gap,
+        contour            = True,
+        similarity_level= config['sim_lvl']
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -290,7 +298,9 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         raw_note = sym
 
         if log_callback and top_probs:
-            log_callback(f"__markov_probs__:{sym}:{top_probs}")
+            p = sym['pitch']
+            choices = [(s['pitch'], prob) for s, prob in top_probs]
+            log_callback(f"__markov_probs__:{p}:{choices}")
 
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
@@ -362,7 +372,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
     state = {
         'prev_state': 0,
         'symbol_history': [initial_sym],   # for Markov
-        'pitch_history': [ initial_sym['pitch'] if initial_sym['type']=='note' else initial_sym['pitch'][0] ],
+        'pitch_history': [initial_sym['pitch'] if initial_sym['type']=='note' else initial_sym['pitch'][0]],
         'symbols': symbols,
         'trans_oracle': trans_oracle,
         'supply': supply,

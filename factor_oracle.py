@@ -196,10 +196,17 @@ def generate_note_oracle(
             else:
                 next_state = random.choice(list(state_links.values())) if state_links else previous_state
 
-    # fallback if nothing picked
+    # fallback if nothing picked or reached the last state
     if next_state is None or not (0 < next_state <= max_state):
-        next_state = previous_state if 0 < previous_state <= max_state else 0
-        link_type = 'fallback'
+        sl = supply.get(previous_state, -1)
+        if previous_state == max_state or sl == -1:
+            sl = supply.get(max_state, -1)  # Follow suffix from the last state
+        if sl != -1 and (sl + 1) <= max_state:
+            next_state = sl + 1
+            link_type = 'suffix'
+        else:
+            next_state = 1  # Ultimate fallback
+            link_type = 'wrap-around'
 
     new_symbol: List[int] = originals[next_state]
     return next_state, new_symbol, link_type

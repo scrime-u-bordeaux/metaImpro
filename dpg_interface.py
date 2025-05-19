@@ -42,7 +42,7 @@ def append_log_entry(msg: str):
     if msg.startswith("__markov_probs__"):
         try:
             _, chosen_pitch_str, probs_str = msg.split(":", 2)
-            chosen_pitch = int(chosen_pitch_str)
+            chosen_pitch = chosen_pitch_str
             top_probs = eval(probs_str)  # ex: [(60, 0.5), (62, 0.5)]
             update_pie_chart(top_probs, chosen_pitch)
         except Exception as e:
@@ -71,10 +71,10 @@ def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chose
         return
 
     probs = [p[1] for p in top_probs]  # probabilités
-    pitches = [p[0] for p in top_probs]  # numéros de pitch
+    pitches = [pitch for pitch, _ in top_probs]  # numéros de pitch
 
     # on créé des labels avec pitch  + la proba de la note
-    pitch_labels = []
+
     pitch_labels = [f"{pitch} : {prob:.2f}" for pitch, prob in top_probs]
 
     try:
@@ -88,9 +88,6 @@ def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chose
         # Si l'axe Y existe, on le nettoie
         if dpg.does_item_exist(y_axis_id):
             dpg.delete_item(y_axis_id)
-
-        # Récupérer la référence à l'axe X - il devrait déjà être créé
-        x_axis_tag = "x_axis_markov"
 
         # Créer un nouvel axe Y pour le graphique
         with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True,
@@ -141,7 +138,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
-        dpg.hide_item(lvl_tag)
+        dpg.show_item(lvl_tag)
         dpg.show_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.show_item("markov_text")
