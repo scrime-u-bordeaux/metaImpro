@@ -1,105 +1,205 @@
-import os
-import json
-import numpy as np
+from typing import Dict, List, Tuple, Any, Optional
 import random
-from typing import List, Dict, Tuple, Optional, Any, Union
 
-
-"""
-Ce code contient trois fonctions :
-- Une pour comparer les symboles entre eux,
-- La seconde pour renvoyer l'indice d'un symbole similaire dans un dictionnaire,
-- La dernière qui permet de construire l'oracle  à partir des symboles
-- En bonus, une fonction pour calculer le rsl si cela est utile plus tard
-
-
-"""
-
-def symbols_are_similar(sym1, sym2):
+class OracleBuilder:
     """
-    Compare deux symboles  en vérifiant l'égalité de chacun de leurs éléments.
-    Renvoie True si tous les éléments sont égaux.
+    Classe pour construire un oracle de facteurs à partir de symboles musicaux (notes et accords),
+    en prenant en compte différents niveaux de similarité.
     """
-    return sym1[0] == sym2[0] and sym1[1] == sym2[1] and sym1[2] == sym2[2]
 
-
-def find_similar(d, sigma):
-    """
-    Parcourt le dictionnaire d transitions (d) pour vérifier si une clé déjà présente est similaire à sigma.
-    Renvoie la clé existante si trouvée, sinon retourne None.
-    """
-    for key in d:
-        if symbols_are_similar(key, sigma):
-            return key
-    return None
-
-
-def oracle(sequence):
-    """
-    Construit un oracle des facteurs à partir d'une séquence de symboles.
-    """
-    transitions = {0: {}}
-    supply = {0: -1}
-    currentState = 0  # dernier état créé (initialement 0)
-
-    def addSymbol(sigma, m, transitions, supply):
-        # Convertir le symbole en tuple s'il est passé sous forme de liste
-        if isinstance(sigma, list):
-            sigma = tuple(sigma)
-
-        newState = m + 1
-        transitions[newState] = {}  # Nouveau dictionnaire pour l'état newState
-
-        # Utilisation de find_similar pour vérifier s'il existe déjà une clé similaire dans transitions[m]
-        if find_similar(transitions[m], sigma) is None:
-            transitions[m][sigma] = newState
+    @staticmethod
+    def symbol_to_key(symbol: Dict[str, Any]) -> Tuple:
+        """
+        Transforme un symbole (note ou accord dict) en tuple hashable.
+        """
+        if symbol["type"] == "note":
+            return ("note", symbol["pitch"], symbol["duration"], symbol["velocity"])
+        elif symbol["type"] == "chord":
+            return (
+                "chord",
+                tuple(sorted(symbol["pitch"])),
+                symbol["duration"],
+                symbol["velocity"],
+            )
         else:
-            # Même si un symbole similaire existe déjà, on écrase la transition pour forcer le lien avec newState
-            transitions[m][sigma] = newState
+            raise ValueError(f"Type de symbole inconnu: {symbol.get('type')}")
 
-        k = supply[m]
-        while k > -1 and find_similar(transitions[k], sigma) is None:
-            transitions[k][sigma] = newState
-            k = supply[k]
+    @staticmethod
+    def key_similarity_level(key1: Tuple, key2: Tuple) -> Optional[int]:
+        """
+        Détermine le niveau de similarité entre deux clés de symbole musical.
+        Retourne :
+            3 : Similarité Forte (pitch/chord, duration, velocity identiques)
+            2 : Similarité Moyenne (pitch/chord & duration identiques)
+            1 : Similarité Faible (pitch/chord identiques)
+            None : Pas de similarité
+        """
+        if key1[0] != key2[0]:
+            return None
+        # note: ("note", pitch, duration, velocity)
+        # chord: ("chord", tuple(pitch), duration, velocity)
+        # compare type-specific attributes
+        # strong: full equality
+        if key1 == key2:
+            return 3
+        # medium: type and pitch & duration
+        if key1[1] == key2[1] and key1[2] == key2[2]:
+            return 2
+        # weak: type and pitch
+        if key1[1] == key2[1]:
+            return 1
+        return None
 
-        if k == -1:
-            s = 0
-        else:
-            key_match = find_similar(transitions[k], sigma)
-            s = transitions[k][key_match]
-        supply[newState] = s
+    @staticmethod
+    def build_oracle(sequence: List[Dict[str, Any]]) -> Tuple[
+        Dict[int, Dict[Tuple, int]], Dict[int, int],
+        Dict[int, Dict[Tuple, int]], Dict[int, int],
+        Dict[int, Dict[Tuple, int]], Dict[int, int]
+    ]:
+        """
+        Construit l’oracle à partir d’une séquence de symboles.
 
-        return newState
+        Args:
+            sequence: Liste de symboles (dictionnaires "note" ou "chord")
 
-    # Lecture de la séquence symbole par symbole
-    for symbol in sequence:
-        currentState = addSymbol(symbol, currentState, transitions, supply)
+        Returns:
+            Tuple contenant les transitions et supply pour les niveaux de similarité 3, 2 et 1.
+        """
+        # Initialisation des oracles pour chaque niveau
+        levels = [3, 2, 1]
+        transitions = {lvl: {0: {}} for lvl in levels}
+        supply = {lvl: {0: -1} for lvl in levels}
+        current_state = 0
 
-    return transitions, supply
+        for symbol in sequence:
+            sigma_key = OracleBuilder.symbol_to_key(symbol)
+            new_state = current_state + 1
 
-def compute_rsl(supply, sequence):
+            # préparer nouveaux dictionnaires pour le nouvel état
+            for lvl in levels:
+                transitions[lvl][new_state] = {}
+
+            # ajouter transitions et mettre à jour supply pour chaque niveau
+            for lvl in levels:
+                # ajout direct à partir de l'état courant
+                transitions[lvl][current_state].setdefault(sigma_key, new_state)
+
+                # mise à jour des suffixes
+                k = supply[lvl][current_state]
+                while k > -1 and OracleBuilder.key_similarity_level(sigma_key, sigma_key) is not None \
+                      and all(
+                          OracleBuilder.key_similarity_level(prev_key, sigma_key) != lvl
+                          for prev_key in transitions[lvl][k]
+                      ):
+                    transitions[lvl][k][sigma_key] = new_state
+                    k = supply[lvl][k]
+
+                # détermination du supply pour le nouvel état
+                if k == -1:
+                    s = 0
+                else:
+                    # trouver un précédent de même similarité
+                    s = next(
+                        transitions[lvl][k][prev_key]
+                        for prev_key in transitions[lvl][k]
+                        if OracleBuilder.key_similarity_level(prev_key, sigma_key) == lvl
+                    )
+                supply[lvl][new_state] = s
+
+            current_state = new_state
+
+        # retourner dans l'ordre (3, supply3, 2, supply2, 1, supply1)
+        return (
+            transitions[3], supply[3],
+            transitions[2], supply[2],
+            transitions[1], supply[1]
+        )
+
+
+def generate_note_oracle(
+    previous_state: int,
+    transitions: Dict[int, Dict[Tuple[Any, ...], int]],
+    supply: Dict[int, int],
+    symbols: List[Dict],
+    target_duration: int,
+    gap: int,
+    p: float = 0.8,
+    contour: bool = True
+) -> Tuple[int, List[int], str]:
     """
-    Calcule la longueur du contexte répété pour chaque état.
-    
+    Generate the next note or chord using one level of the factor oracle.
+
     Args:
-        supply: dictionnaire des suffix links
-        sequence: séquence originale
-    
-    Returns:
-        Un tableau des longueurs de contexte
-    """
-    n = len(sequence)
-    rsl = [0] * n
-    
-    for i in range(1, n):
-        if supply[i] != -1:
-            j = supply[i]
-            if j > 0:
-                # La longueur du contexte est la longueur du plus long suffixe répété
-                rsl[i] = rsl[j] + 1
-            else:
-                # Si le suffixe pointe vers l'état initial, la longueur est 1
-                rsl[i] = 1
-    
-    return rsl
+        previous_state: last state index in the oracle.
+        transitions: mapping state -> {symbol_key: next_state}.
+        supply: mapping state -> suffix_state.
+        symbols: list of original symbols (with 'type', 'pitch'/'pitch', 'duration', 'velocity', 'onset').
+        target_duration: duration target for filtering.
+        gap: melodic contour direction (+ up, - down, 0 neutral).
+        p: probability of following a factor link.
+        contour: whether to enforce melodic contour.
 
+    Returns:
+        next_state: chosen state index.
+        new_symbol: List pitch for a note or tuple of pitch for a chord.
+        link_type: which link was used ('factor', 'suffix', or 'fallback').
+    """
+    # Build arrays aligned to oracle states (state 0 dummy)
+    rep_pitch: List[int] = [0]
+    durations: List[int] = [0]
+    originals: List[List[int]] = [[]]  # now holds lists, index 0 unused
+
+    for sym in symbols:
+        dur = sym['duration']
+        if sym['type'] == 'note':
+            pr = int(sym['pitch'])
+            orig = [pr]
+        elif sym['type'] == 'chord':
+            orig = list(sym['pitch'])
+            pr = orig[0]
+        else:
+            raise ValueError(f"Unknown symbol type: {sym.get('type')}")
+        originals.append(orig)
+        rep_pitch.append(pr)
+        durations.append(dur)
+
+    max_state = len(symbols)
+    next_state: Optional[int] = None
+    link_type = 'fallback'
+
+    # factor / suffix links logic
+    state_links = transitions.get(previous_state, {})
+    if state_links:
+        if random.random() < p:
+            link_type = 'factor'
+            candidates = list(state_links.values())
+            if contour and previous_state > 0:
+                cur = rep_pitch[previous_state]
+                filtered = [
+                    s for s in candidates
+                    if 0 < s <= max_state and (
+                        (gap > 0 and rep_pitch[s] > cur) or
+                        (gap < 0 and rep_pitch[s] < cur) or
+                        (gap == 0)
+                    )
+                ]
+                next_state = (min(filtered, key=lambda s: abs(durations[s] - target_duration))
+                              if filtered else random.choice(candidates))
+            else:
+                next_state = random.choice(candidates)
+        else:
+            link_type = 'suffix'
+            sl = supply.get(previous_state, -1)
+            if sl != -1:
+                cand = sl + 1
+                next_state = cand if 0 < cand <= max_state else 0
+            else:
+                next_state = random.choice(list(state_links.values())) if state_links else previous_state
+
+    # fallback if nothing picked
+    if next_state is None or not (0 < next_state <= max_state):
+        next_state = previous_state if 0 < previous_state <= max_state else 0
+        link_type = 'fallback'
+
+    new_symbol: List[int] = originals[next_state]
+    return next_state, new_symbol, link_type

@@ -1,20 +1,19 @@
 from time import time
-from impro import generate_note_oracle
-import factor_oracle as fo
-from create_symbols import extract_features, create_symbole
+from factor_oracle import OracleBuilder, generate_note_oracle
+from midi_processor import MidiSymbolProcessor
 import mido
 import fluidsynth
-from markov import build_vlmc_table, generate_note_vlmc
+from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
 import random
 import numpy as np
-
+from typing import List
 import pygame
 import threading
 
-log = print
+log = print # type:ignore
 # Mapping clavier pour contour mélodique
 KEYBOARD_MAPPING = {
-    pygame.K_a: 0, pygame.K_z: 1, pygame.K_e: 2, pygame.K_r: 3,
+    pygame.K_a: 0, pygame.K_z: 1, pygame.K_e: 2, pygame.K_r: 3, 
     pygame.K_t: 4, pygame.K_y: 5, pygame.K_u: 6, pygame.K_i: 7,
 }
 
@@ -40,25 +39,85 @@ def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     fs.program_select(0, sfid, 0, preset)
     return fs
 
-
-def load_symbols_from_midi(midi_path: str, markov_order: int = 1):
+def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 3):
     """
-    Extrait les symboles musicaux et calcule les transitions pour Oracle et Markov.
-
-    Args:
-        midi_path (str): Chemin vers le fichier MIDI.
-
-    Returns:
-        tuple: mid_symbols, trans_oracle, supply, vlmc_table, notes
+    Charge et renvoie la liste des symboles Midi traités.
+    Construit  
+      - l'oracle de FactorOracle (transitions/supplys),
+      - la table VLMC (max_order=1),
+      - la liste de clés uniques pour VLMC.
     """
-    features = extract_features(midi_path)
-    mid_symbols = create_symbole(features)
-    trans_oracle, supply = fo.oracle(sequence=mid_symbols)
-    vlmc_table = build_vlmc_table(mid_symbols, max_order=markov_order)
-    notes = sorted({s[0] for s in mid_symbols})
-    pitches = np.unique([s[0] for s in mid_symbols])
-    return mid_symbols, trans_oracle, supply, vlmc_table, notes, pitches
+    processor = MidiSymbolProcessor()
+    symbols = processor.process_midi_file(midi_path)
+    if not symbols:
+        raise ValueError(f"Aucun symbole généré pour {midi_path}")
+    
+    # Oracle
+    t3, s3, t2, s2, t1, s1 = OracleBuilder.build_oracle(symbols)
+    trans = {3: t3, 2: t2, 1: t1}
+    sup     = {3: s3, 2: s2, 1: s1}
+    transitions = trans[similarity_level]
+    supply = sup[similarity_level]
+    # Markov
+    vlmc_table = build_vlmc_table(symbols, max_order=markov_order)
+    all_keys    = list({symbol_to_key(s) for s in symbols})
 
+     # Extraction des hauteurs uniques pour le mode random
+    unique_pitches = get_unique_pitches(symbols)
+
+    return symbols, transitions, supply, vlmc_table, all_keys, unique_pitches
+
+def get_unique_pitches(symbols):
+    """
+    Makes a liste of symbols into a list of lists of unique_pitches
+
+    """
+    unique_symbols = []
+    seen_pitches = set()
+
+    for symbol in symbols:
+        if symbol['type'] == 'note':
+            pitch = symbol['pitch']
+            if pitch not in seen_pitches:
+                unique_symbols.append(pitch)
+                seen_pitches.add(pitch)
+        elif symbol['type'] == 'chord':
+            # Traitement des accords comme symboles uniques
+            unique_symbols.append(symbol['pitch'])
+    return unique_symbols
+
+
+def normalize_note(note, dur_eff=None, default_velocity=80):
+    """
+    Turn any of:
+      - an int (oracle single note)
+      - a 2-tuple (pitch, velocity) or (pitch, duration)
+      - a tuple of pitches (a chord)
+      - a dict from VLMC: {'type':'note'|'chord', ...}
+    into a unified (pitches_list, duration, velocity) triple.
+    """
+    
+    # note = list (oracle generation/random)
+    if isinstance(note, list) and all(isinstance(p, int) for p in note):
+
+        return note, dur_eff, default_velocity
+    
+    # note dict :{'type': 'note', 'pitch': int, 'duration': int, 'velocity': int} (Markov generation)
+    if isinstance(note, dict):
+        typ = note.get('type')
+        if typ == 'note':
+            # single pitch wrapped in a list
+            return [note['pitch']], \
+                    note.get('duration', dur_eff), \
+                    note.get('velocity', default_velocity)
+        elif typ == 'chord':
+            # multiple pitches
+            pitches = note['pitch']
+            return list(pitches), \
+                    note.get('duration', dur_eff), \
+                    note.get('velocity', default_velocity)
+
+    raise ValueError(f"Cannot normalize note: {note!r}")
 
 def handle_keydown(event, state, config, synth, history, last_times, log_callback=None):
     """
@@ -91,40 +150,51 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
 
     # Génération de la note selon mode
     if config['mode'] == 'oracle':
-        new_state, note, _ = generate_note_oracle(
-            state['prev_state'], dur_eff,
-            state['trans_oracle'], state['supply'], state['mid_symbols'], gap,
-            p=config['p'], contour=False
+        new_state, raw_note, type_link = generate_note_oracle(
+            state['prev_state'],
+            state['trans_oracle'],
+            state['supply'],
+            state['symbols'],
+            dur_eff,
+            gap,
+            p=config['p'],
+            contour=True
         )
         state['prev_state'] = new_state
         if log_callback:
-            log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
+            log_callback(f"__progress__:{new_state}:{len(state['symbols'])}")
 
     elif config['mode'] == 'markov':
         # Markov: contexte variable
-        next_pitch, next_prob, top_probs = generate_note_vlmc(
-            state['context'], state['vlmc_table'], state['notes'],
-            gap, contour=True, max_order=config['markov_order']
+        sym, next_prob, top_probs = generate_symbol_vlmc(
+            state['symbol_history'],
+            state['vlmc_table'],
+            state['notes'],
+            gap,
+            contour=True
         )
         # Mise à jour du contexte
-        state['context'].append(next_pitch)
+        state['symbol_history'].append(sym)
+        #historique pour display
+        state['pitch_history'].append(sym['pitch'])
         # Conserver uniquement les derniers N selon markov_order
-        max_ord = config['markov_order']
-        if max_ord > 0 and len(state['context']) > max_ord:
-            state['context'] = state['context'][-max_ord:]
-        note = (next_pitch, dur_eff, 64)
+        if len(state['symbol_history']) > config['markov_order'] + 1:
+            state['symbol_history'].pop(0)
+            state['pitch_history'].pop(0)
+        raw_note = sym
         if log_callback and top_probs:
-            log_callback(f"__markov_probs__:{next_pitch}:{top_probs}")
+            log_callback(f"__markov_probs__:{sym}:{top_probs}")
             
     elif config['mode'] == 'random':
-        pitch = random.choice(state['unique_pitches'])
-        note = (pitch, dur_eff, 80)
-
-    # Jouer note
-    synth.noteon(0, note[0], note[2])
-    state['note_buffer'][event.key] = note[0]
+        rnd = random.choice(state['unique_pitches'])
+        raw_note = rnd if isinstance(rnd, list) else [rnd]
+    # Jouer note ou accord
+    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+    for p in pitches_to_play:
+        synth.noteon(0, p, vel)
+    state['note_buffer'][event.key] = pitches_to_play
     log(
-        f"KD {pygame.key.name(event.key)} -> pitch {note[0]}, vel {note[2]}, dur_eff {dur_eff:.2f}, gap {gap}"
+        f"KD {pygame.key.name(event.key)} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}"
     )
 
 
@@ -146,10 +216,11 @@ def handle_keyup(event, state, synth, history, last_times):
     # Durée réelle
     dur = time() - last_times['key_start'][event.key]
     # Récupérer pitch et arrêter le son
-    pitch = state['note_buffer'].pop(event.key, None)
-    if pitch is not None:
-        synth.noteoff(0, pitch)
-    info = f"KU {pygame.key.name(event.key)} -> pitch {pitch}, dur {dur:.2f}"
+    pitches = state['note_buffer'].pop(event.key, None)
+    if pitches is not None:
+        for p in pitches:
+            synth.noteoff(0, p)
+    info = f"KU {pygame.key.name(event.key)} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
     # Mettre à jour les temps
@@ -188,42 +259,51 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     # Génération de la note selon le mode
     if config['mode'] == 'oracle':
-        new_state, note, _ = generate_note_oracle(
-            state['prev_state'], dur_eff,
-            state['trans_oracle'], state['supply'], state['mid_symbols'], gap,
-            p=config['p'], contour=False
+        new_state, raw_note, _ = generate_note_oracle(
+            state['prev_state'],
+            state['trans_oracle'],
+            state['supply'],
+            state['symbols'],
+            dur_eff,
+            gap,
+            p=config['p'],
+            contour=True
         )
         state['prev_state'] = new_state
         if log_callback:
-            log_callback(f"__progress__:{new_state}:{len(state['mid_symbols'])}")
+            log_callback(f"__progress__:{new_state}:{len(state['symbols'])}")
 
     elif config['mode'] == 'markov':
         # Markov: contexte variable
-        next_pitch, next_prob, top_probs = generate_note_vlmc(
-            state['context'], state['vlmc_table'], state['notes'],
-            gap, contour=True, max_order=config['markov_order']
+        sym, next_prob, top_probs = generate_symbol_vlmc(
+            state['symbol_history'],
+            state['vlmc_table'],
+            state['notes'],
+            gap, contour=True
         )
         # Mise à jour du contexte
-        state['context'].append(next_pitch)
+        state['symbol_history'].append(sym)
         # Conserver uniquement les derniers N selon markov_order
         max_ord = config['markov_order']
-        if max_ord > 0 and len(state['context']) > max_ord:
-            state['context'] = state['context'][-max_ord:]
-        note = (next_pitch, dur_eff, velocity)
+        if max_ord > 0 and len(state['symbol_history']) > max_ord:
+            state['symbol_history'] = state['symbol_history'][-max_ord:]
+        raw_note = sym
 
         if log_callback and top_probs:
-            log_callback(f"__markov_probs__:{next_pitch}:{top_probs}")
+            log_callback(f"__markov_probs__:{sym}:{top_probs}")
 
     elif config['mode'] == 'random':
-        pitch = random.choice(state['unique_pitches'])
-        note = (pitch, dur_eff, velocity)
-
-    # Jouer la note
-    synth.noteon(0, note[0], note[2])
-    state['note_buffer'][note_index] = note[0]
+        rnd = random.choice(state['unique_pitches'])
+        raw_note = rnd if isinstance(rnd, list) else [rnd]
+    # Jouer la note ou accord
+    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff, default_velocity=velocity)
+    for p in pitches_to_play:
+        synth.noteon(0, p, vel)            
+        
+    state['note_buffer'][note_index] = pitches_to_play
     last_times['key_start'][note_index] = now
     log(
-        f"KD MIDI note {note_index} -> pitch {note[0]}, vel {note[2]}, dur_eff {dur_eff:.2f}, gap {gap}"
+        f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}"
     )
 
 def handle_keyup_midi(note_index, state, synth, history, last_times):
@@ -248,10 +328,11 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     # Durée réelle
     dur = time() - start_time
     # Récupérer le pitch et arrêter le son
-    pitch = state['note_buffer'].pop(note_index, None)
-    if pitch is not None:
-        synth.noteoff(0, pitch)
-    info = f"KU MIDI note {note_index} -> pitch {pitch}, dur {dur:.2f}"
+    pitches = state['note_buffer'].pop(note_index, None)
+    if pitches is not None:
+        for p in pitches:
+            synth.noteoff(0, p)
+    info = f"KU MIDI note {note_index} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
     # Mettre à jour les temps
@@ -271,18 +352,22 @@ def improvisation_loop(config, stop_event, log_callback=None):
             log_callback(msg)
         history.append(msg)
 
-
-    mid_symbols, trans_oracle, supply, vlmc_table, notes, unique_pitches = load_symbols_from_midi(
+    
+    symbols, trans_oracle, supply, vlmc_table, all_keys, unique_pitches = load_symbols(
         config['corpus'], markov_order=config['markov_order']
     )
+
+    initial_sym = symbols[0] if symbols else {'type':'note','pitch':60,'duration':0,'velocity':80}
+
     state = {
         'prev_state': 0,
-        'context': [mid_symbols[0][0] if mid_symbols else 60],
-        'mid_symbols': mid_symbols,
+        'symbol_history': [initial_sym],   # for Markov
+        'pitch_history': [ initial_sym['pitch'] if initial_sym['type']=='note' else initial_sym['pitch'][0] ],
+        'symbols': symbols,
         'trans_oracle': trans_oracle,
         'supply': supply,
         'vlmc_table': vlmc_table,
-        'notes': notes,
+        'notes': all_keys,
         'unique_pitches': unique_pitches,
         'note_buffer': {}
     }
@@ -311,7 +396,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
     else:
         try:
-            midi_port = mido.open_input(config['device'])
+            midi_port = mido.open_input(config['device']) #type:ignore
             print(f"✅ MIDI mode actif avec le port : {config['device']}")
             for msg in midi_port:
                 if stop_event.is_set():

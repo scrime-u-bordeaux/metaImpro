@@ -12,7 +12,7 @@ _stop_event = None
 note_history = []
 
 def get_device():
-    return mido.get_input_names()
+    return mido.get_input_names() #type:ignore
 
 def get_corpus():
     """
@@ -25,7 +25,7 @@ def get_corpus():
         files = os.listdir(CORPUS_FOLDER)
     except FileNotFoundError:
         return []
-    return [f for f in files if f.lower().endswith('.mid')]
+    return [f for f in files if f.lower().endswith('.mid') or f.lower().endswith('.midi')]
 
 def append_log_entry(msg: str):
     global note_history
@@ -49,7 +49,7 @@ def append_log_entry(msg: str):
             print(f"Erreur parsing bar chart: {e}")
         return
     
-    note_history = note_history[-10:]  # garde seulement les 9 derniers si nécessaire
+    note_history = note_history[-10:]  # garde seulement les 10 derniers si nécessaire
     note_history.append(msg)
     dpg.configure_item("note_log", items=note_history)
 
@@ -128,18 +128,20 @@ def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chose
         print(f"Erreur update pie chart: {e}")
         
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag = user_data
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
-        dpg.hide_item(markov_tag)
         dpg.show_item(progress_tag)
-        dpg.hide_item("markov_plot")
+        dpg.show_item(lvl_tag)
+        dpg.hide_item(markov_tag)
         dpg.show_item("oracle_text")
+        dpg.hide_item("markov_plot")
         dpg.hide_item("markov_text")
     elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
+        dpg.hide_item(lvl_tag)
         dpg.show_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.show_item("markov_text")
@@ -147,6 +149,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
         dpg.hide_item(progress_tag)
+        dpg.hide_item(lvl_tag)
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
@@ -160,8 +163,8 @@ def on_launch(sender, app_data):
         val = dpg.get_value('model_combo')
         lignes.append(f"Modèle : {val}")
 
-    if dpg.is_item_shown('oracle_slider'):
-        lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider'):.2f}")
+    if dpg.is_item_shown('oracle_slider_p'):
+        lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider_p'):.2f}")
 
     if dpg.is_item_shown('markov_combo'):
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
@@ -174,9 +177,10 @@ def on_launch(sender, app_data):
     mode = dpg.get_value('model_combo')
     device = dpg.get_value('device_combo')
     corpus_file = dpg.get_value('corpus_combo')
-    p_value = dpg.get_value('oracle_slider') if dpg.is_item_shown('oracle_slider') else None
+    p_value = dpg.get_value('oracle_slider_p') if dpg.is_item_shown('oracle_slider_p') else None
+    similarity_level = dpg.get_value('oracle_combo_lvl') if dpg.is_item_shown('oracle_combo_lvl') else 2
     markov_order = dpg.get_value('markov_combo') if dpg.is_item_shown('markov_combo') else 1 #mettre  à un sinon la fonction vlmc_table bug pour créer la table de transition 
-    markov_order = int(markov_order) #on cast un int car c'est un str
+
 
     # Construction du chemin complet du corpus
     corpus_path = os.path.join(CORPUS_FOLDER, corpus_file)
@@ -186,7 +190,8 @@ def on_launch(sender, app_data):
         'device': device,
         'corpus': corpus_path,
         'p': p_value,
-        'markov_order': markov_order,
+        'markov_order': int(markov_order),
+        'sim_lvl': int(similarity_level),
         'sf2_path': 'Roland_SC-88.sf2'
     }
 
@@ -228,14 +233,14 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider', 'markov_combo', 'oracle_progress')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'oracle_combo_lvl')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
         dpg.add_combo(
             tag='markov_combo',
-            items= [0, 1, 2, 3],
-            default_value=1,
+            items= ['0', '1', '2', '3'],
+            default_value='1',
             label="Choisissez l'Ordre",
             width=200,
 
@@ -243,11 +248,18 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
 
         # Slider Oracle
         dpg.add_slider_float(
-            tag="oracle_slider",
+            tag="oracle_slider_p",
             label="p",
             default_value=0.5,
             min_value=0.0,
             max_value=1.0,
+            width=200
+        )
+        dpg.add_combo(
+            tag="oracle_combo_lvl",
+            label="Similarity level",
+            default_value='1',
+            items=['1', '2', '3'],
             width=200
         )
 
@@ -272,7 +284,7 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
     dpg.add_progress_bar(tag="oracle_progress",
         default_value=0.0,
         width=800,
-        user_data=('oracle_slider', 'markov_combo', 'oracle_progress')
+        user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'oracle_slider_lvl')
         )
 
     # Camembert Markov

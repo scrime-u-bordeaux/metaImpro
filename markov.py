@@ -1,87 +1,154 @@
-import numpy as np
 from collections import defaultdict
+import numpy as np
+from typing import List, Dict, Tuple, Any
 
-def build_vlmc_table(midSymbols, max_order=3):
+
+def symbol_to_key(symbol: Dict[str, Any]) -> Tuple:
     """
-    Construit une table de transition pour une chaîne de Markov à longueur variable.
-
-    Args:
-        midSymbols (list of tuples): Séquence de notes (pitches, duration, velocity).
-        max_order (int): Ordre maximal du contexte (par défaut 3).
-
-    Returns:
-        dict: Table de transition sous forme de dictionnaire.
+    Transforme un symbole (note ou accord dict) en tuple hashable.
     """
-    sequence = [s[0] for s in midSymbols]
-    table = defaultdict(lambda: defaultdict(int))
-    for i in range(len(sequence)):
+    if symbol["type"] == "note":
+        return ("note", symbol["pitch"], symbol["duration"], symbol["velocity"])
+    elif symbol["type"] == "chord":
+        return (
+            "chord",
+            tuple(sorted(symbol["pitch"])),
+            symbol["duration"],
+            symbol["velocity"],
+        )
+    else:
+        raise ValueError(f"Type de symbole inconnu: {symbol.get('type')}")
+
+
+def key_to_symbol(key: Tuple) -> Dict[str, Any]:
+    """
+    Convertit la clé tuple en symbole dict.
+    """
+    if key[0] == "note":
+        return {
+            "type": "note",
+            "pitch": key[1],
+            "duration": key[2],
+            "velocity": key[3],
+        }
+    elif key[0] == "chord":
+        return {
+            "type": "chord",
+            "pitch": list(key[1]),
+            "duration": key[2],
+            "velocity": key[3],
+        }
+    else:
+        raise ValueError(f"Type de clé inconnue: {key[0]}")
+
+
+def build_vlmc_table(
+    symbols: List[Dict[str, Any]], max_order: int = 3
+    ) -> Dict[Tuple, Dict[Tuple, int]]:
+    """
+    Construit la table VLMC à partir d'une séquence de symboles.
+    """
+    table: Dict[Tuple, Dict[Tuple, int]] = defaultdict(lambda: defaultdict(int))
+    keys = [symbol_to_key(s) for s in symbols]
+
+    for i in range(len(keys)):
         for order in range(1, max_order + 1):
             if i - order < 0:
-                continue
-            context = tuple(sequence[i - order:i])
-            next_note = sequence[i]
-            table[context][next_note] += 1
+                break
+            context = tuple(keys[i - order : i])
+            table[context][keys[i]] += 1
+
     return table
 
-def generate_note_vlmc(previous_notes, vlmc_table, notes, gap, contour=True, max_order=3):
+
+
+def generate_symbol_vlmc(
+    previous_symbols: List[Dict[str, Any]],
+    vlmc_table: Dict[Tuple, Dict[Tuple, int]],
+    all_keys: List[Tuple],
+    max_order: int = 3,
+    gap: int = 0,
+    contour: bool = True
+) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
-    Génère la note suivante en utilisant une chaîne de Markov à longueur variable à  partir de la note précédente.
+    Génère le symbole suivant via VLMC avec logique de contour mélodique.
 
     Args:
-        previous_notes (list of int): Notes précédentes (historique).
-        vlmc_table (dict): Table de transition VLMC.
-        notes (list of int): Liste des notes possibles.
-        gap (int): Écart entre les touches appuyées (positif pour monter, négatif pour descendre, zéro pour neutre).
-        contour (bool): Active ou non le contour mélodique.
-        max_order (int): Ordre maximal du contexte.
+        previous_symbols: symboles précédents (notes/accords) sous forme de dictionnaires contenant au moins 'pitch'.
+        vlmc_table: table VLMC (contexte -> {clé: count}).
+        all_keys: toutes les clés possibles (fallback).
+        max_order: ordre max du contexte.
+        gap: écart entre les hauteurs (positif = monter, négatif = descendre).
+        contour: active la contrainte de contour mélodique.
 
     Returns:
-        tuple: (next_pitch, next_prob, top_probs)
+        sym: nouveau symbole dict.
+        prob: probabilité associée.
+        top_probs: liste des 4 meilleures probabilités [(sym, prob), ...].
     """
-    notes_arr = np.array(notes)
-    context = tuple(previous_notes[-max_order:]) if previous_notes else ()
-    
-    # Recherche du contexte le plus long possible
+    # Construction de l'historique de clés
+    history = [symbol_to_key(s) for s in previous_symbols]
+    context = tuple(history[-max_order:]) if history else ()
+
+    # Recherche du plus long contexte disponible
     for order in range(len(context), 0, -1):
-        sub_context = context[-order:]
-        if sub_context in vlmc_table:
-            next_notes_dict = vlmc_table[sub_context]
+        sub = context[-order:]
+        if sub in vlmc_table:
+            dist = vlmc_table[sub]
             break
     else:
-        # Si aucun contexte trouvé, sélection aléatoire uniforme
-        next_pitch = int(np.random.choice(notes_arr))
-        return next_pitch, 1.0 / len(notes_arr), [(next_pitch, 1.0 / len(notes_arr))]
+        # fallback uniforme sur toutes les clés
+        idx = np.random.choice(len(all_keys))
+        key = all_keys[idx]
+        sym = key_to_symbol(key)
+        prob = 1.0 / len(all_keys)
+        return sym, prob, [(sym, prob)]
 
-    # Construction de la distribution de probabilité
-    next_notes = list(next_notes_dict.keys())
-    counts = np.array([next_notes_dict[n] for n in next_notes])
+    # Préparation de la distribution
+    symbols = list(dist.keys())
+    counts = np.array([dist[k] for k in symbols], dtype=float)
+    # Application du contour mélodique si activé
+    if contour and previous_symbols:
+        prev_pitch = previous_symbols[-1].get('pitch', 0)
+        # Calcul des écarts
+        pitches = np.array([key_to_symbol(k).get('pitch', 0) for k in symbols])
+        if gap > 0:
+            mask = pitches > prev_pitch
+        elif gap < 0:
+            mask = pitches < prev_pitch
+        else:
+            mask = np.ones_like(counts, dtype=bool)
+        # Filtrer les counts
+        filtered = counts * mask
+        if filtered.sum() > 0:
+            counts = filtered
+    
     probs = counts / counts.sum()
 
-    # Application du contour mélodique si activé
-    if contour and previous_notes:
-        last_pitch = previous_notes[-1]
-        if gap > 0:
-            mask = np.array(next_notes) > last_pitch
-        elif gap < 0:
-            mask = np.array(next_notes) < last_pitch
-        else:
-            mask = np.ones_like(probs, dtype=bool)
-        if mask.any():
-            probs = probs[mask]
-            probs = probs / probs.sum() #renormalisation
-            next_notes = np.array(next_notes)[mask]
-        else:
-            # Si aucune note ne respecte le contour, fallback uniforme
-            next_pitch = int(np.random.choice(notes_arr))
-            return next_pitch, 1.0 / len(notes_arr), [(next_pitch, 1.0 / len(notes_arr))]
+    # Tirage
+    idx = np.random.choice(len(symbols), p=probs)
+    chosen_key = symbols[idx]
+    sym = key_to_symbol(chosen_key)
+    prob = float(probs[idx])
 
-    # Sélection de la note suivante
-    next_notes = np.array(next_notes)
-    next_pitch = int(np.random.choice(next_notes, p=probs))
-    next_prob = float(probs[np.where(next_notes == next_pitch)[0][0]])
+    # Sélection des 4 meilleurs
+    top_n = min(4, len(symbols))
+    top_idx = np.argsort(probs)[::-1][:top_n]
+    top_probs = [(key_to_symbol(symbols[i]), float(probs[i])) for i in top_idx]
 
-    max_top = min(4, len(next_notes))
-    top_indices = np.argsort(probs)[::-1][:max_top]
-    top_probs = [(int(next_notes[i]), float(probs[i])) for i in top_indices]
+    return sym, prob, top_probs
 
-    return next_pitch, next_prob, top_probs
+
+
+"""   
+Utilisation: 
+processor = MidiSymbolProcessor()
+symbols = processor.process_midi_file("ton_fichier.mid")
+
+vlmc_table = build_vlmc_table(symbols, max_order=3)
+all_keys = list({symbol_to_key(s) for s in symbols})  # liste unique des clés symboles
+
+previous = symbols[:3]  # par exemple, contexte initial
+next_sym, prob, top = generate_symbol_vlmc(previous, vlmc_table, all_keys)
+print(next_sym, prob, top)
+"""
