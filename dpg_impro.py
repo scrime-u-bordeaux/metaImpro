@@ -158,7 +158,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             dur_eff,
             gap,
             p=config['p'],
-            contour=True
+            contour=config['contour']
         )
         state['prev_state'] = new_state
         if log_callback:
@@ -172,7 +172,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
-        contour            = True,
+        contour            = config['contour'],
         similarity_level= config['sim_lvl']
         )
         # Mise à jour du contexte
@@ -272,7 +272,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             dur_eff,
             gap,
             p=config['p'],
-            contour=True
+            contour=config['contour']
         )
         state['prev_state'] = new_state
         if log_callback:
@@ -286,7 +286,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
-        contour            = True,
+        contour            = config['contour'],
         similarity_level= config['sim_lvl']
         )
         # Mise à jour du contexte

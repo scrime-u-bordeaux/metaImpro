@@ -5,6 +5,7 @@ import os
 
 model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
 CORPUS_FOLDER = 'corpus'
+BOOL_MAP = {"True": True, "False": False} 
 
 # Variables globales pour gérer le thread d'impro
 _impro_thread = None
@@ -125,11 +126,12 @@ def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chose
         print(f"Erreur update pie chart: {e}")
         
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag, lvl_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag, contour_tag = user_data
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
         dpg.show_item(progress_tag)
         dpg.show_item(lvl_tag)
+        dpg.show_item(contour_tag)
         dpg.hide_item(markov_tag)
         dpg.show_item("oracle_text")
         dpg.hide_item("markov_plot")
@@ -139,6 +141,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
         dpg.show_item(lvl_tag)
+        dpg.show_item(contour_tag)
         dpg.show_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.show_item("markov_text")
@@ -147,6 +150,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item(markov_tag)
         dpg.hide_item(progress_tag)
         dpg.hide_item(lvl_tag)
+        dpg.hide_item(contour_tag)
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
@@ -175,10 +179,10 @@ def on_launch(sender, app_data):
     device = dpg.get_value('device_combo')
     corpus_file = dpg.get_value('corpus_combo')
     p_value = dpg.get_value('oracle_slider_p') if dpg.is_item_shown('oracle_slider_p') else None
-    similarity_level = dpg.get_value('oracle_combo_lvl') if dpg.is_item_shown('oracle_combo_lvl') else 2
+    similarity_level = dpg.get_value('similarity_combo') if dpg.is_item_shown('similarity_combo') else 2
     markov_order = dpg.get_value('markov_combo') if dpg.is_item_shown('markov_combo') else 1 #mettre  à un sinon la fonction vlmc_table bug pour créer la table de transition 
-
-
+    contour = dpg.get_value('contour_combo') if dpg.is_item_shown('contour_combo') else None
+    contour = BOOL_MAP.get(contour)# type:ignore
     # Construction du chemin complet du corpus
     corpus_path = os.path.join(CORPUS_FOLDER, corpus_file)
 
@@ -189,7 +193,8 @@ def on_launch(sender, app_data):
         'p': p_value,
         'markov_order': int(markov_order),
         'sim_lvl': int(similarity_level),
-        'sf2_path': 'Roland_SC-88.sf2'
+        'sf2_path': 'Roland_SC-88.sf2',
+        'contour': contour
     }
 
     # Lancement du thread d'impro
@@ -230,7 +235,7 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'oracle_combo_lvl')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'contour_combo')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
@@ -253,12 +258,20 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
             width=200
         )
         dpg.add_combo(
-            tag="oracle_combo_lvl",
+            tag="similarity_combo",
             label="Similarity level",
             default_value='1',
             items=['1', '2', '3'],
             width=200
         )
+        dpg.add_combo(
+            tag="contour_combo",
+            label="Contour",
+            default_value='True',
+            items=['True', 'False'],
+            width=200
+        )
+        
 
         # On cache les sliders au démarrage
         dpg.hide_item('markov_combo')
