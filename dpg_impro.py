@@ -39,7 +39,7 @@ def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     fs.program_select(0, sfid, 0, preset)
     return fs
 
-def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 3):
+def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 2):
     """
     Charge et renvoie la liste des symboles Midi traités.
     Construit  
@@ -172,7 +172,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
-        contour            = False,
+        contour            = True,
         similarity_level= config['sim_lvl']
         )
         # Mise à jour du contexte
@@ -364,7 +364,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
     
     symbols, trans_oracle, supply, vlmc_table, all_keys, unique_pitches = load_symbols(
-        config['corpus'], markov_order=config['markov_order']
+        config['corpus'], markov_order=config['markov_order'], similarity_level=config['sim_lvl']
     )
 
     initial_sym = symbols[0] if symbols else {'type':'note','pitch':60,'duration':0,'velocity':80}

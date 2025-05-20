@@ -22,24 +22,53 @@ def symbol_to_key(symbol: Dict[str, Any]) -> Tuple:
 
 def key_to_symbol(key: Tuple) -> Dict[str, Any]:
     """
-    Convertit la clé tuple en symbole dict.
+    Convertit une clé tuple en symbole dict, en gérant les longueurs variables selon le niveau de similarité.
     """
-    if key[0] == "note":
+    if not key:
+        raise ValueError("Clé vide fournie à key_to_symbol.")
+
+    t = key[0]
+
+    if t == "note":
+        if len(key) == 4:
+            _, pitch, duration, velocity = key
+        elif len(key) == 3:
+            _, pitch, duration = key
+            velocity = 64  # Valeur par défaut
+        elif len(key) == 2:
+            _, pitch = key
+            duration = 1.0  # Valeur par défaut
+            velocity = 64   # Valeur par défaut
+        else:
+            raise ValueError(f"Clé 'note' invalide : {key}")
         return {
             "type": "note",
-            "pitch": key[1],
-            "duration": key[2],
-            "velocity": key[3],
+            "pitch": pitch,
+            "duration": duration,
+            "velocity": velocity,
         }
-    elif key[0] == "chord":
+
+    elif t == "chord":
+        if len(key) == 4:
+            _, pitches, duration, velocity = key
+        elif len(key) == 3:
+            _, pitches, duration = key
+            velocity = 64  # Valeur par défaut
+        elif len(key) == 2:
+            _, pitches = key
+            duration = 1.0  # Valeur par défaut
+            velocity = 64   # Valeur par défaut
+        else:
+            raise ValueError(f"Clé 'chord' invalide : {key}")
         return {
             "type": "chord",
-            "pitch": list(key[1]),
-            "duration": key[2],
-            "velocity": key[3],
+            "pitch": list(pitches),
+            "duration": duration,
+            "velocity": velocity,
         }
+
     else:
-        raise ValueError(f"Type de clé inconnue: {key[0]}")
+        raise ValueError(f"Type de clé inconnu : {t}")
 
 def truncate_key(key: Tuple, similarity_level: int) -> Tuple:
     """
@@ -127,6 +156,7 @@ def generate_symbol_vlmc(
             break
     else:
         # Fallback uniforme
+        print(f"[DEBUG‑L{similarity_level}] no match for context {context!r}, uniform fallback")
         key = random.choice(all_keys)
         sym = key_to_symbol(key)
         uni_p = 1.0 / len(all_keys)
