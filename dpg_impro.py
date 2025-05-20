@@ -306,7 +306,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         rnd = random.choice(state['unique_pitches'])
         raw_note = rnd if isinstance(rnd, list) else [rnd]
     # Jouer la note ou accord
-    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff, default_velocity=velocity)
+    pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
+    vel = velocity
     for p in pitches_to_play:
         synth.noteon(0, p, vel)            
         
