@@ -9,6 +9,9 @@ import numpy as np
 from typing import List
 import pygame
 import threading
+import os
+import json
+
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
@@ -39,7 +42,7 @@ def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     fs.program_select(0, sfid, 0, preset)
     return fs
 
-def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 2):
+def load_symbols(input_path: str, markov_order: int = 3, similarity_level: int = 2):
     """
     Charge et renvoie la liste des symboles Midi traités.
     Construit  
@@ -47,10 +50,20 @@ def load_symbols(midi_path: str, markov_order: int = 3, similarity_level: int = 
       - la table VLMC (max_order=1),
       - la liste de clés uniques pour VLMC.
     """
-    processor = MidiSymbolProcessor()
-    symbols = processor.process_midi_file(midi_path)
-    if not symbols:
-        raise ValueError(f"Aucun symbole généré pour {midi_path}")
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in ('.json',):
+        # On part du principe que le JSON contient directement une liste de symboles
+        with open(input_path, 'r') as f:
+            symbols = json.load(f)
+        if not isinstance(symbols, list):
+            raise ValueError(f"Le fichier JSON doit contenir une liste de symboles, "
+                             f"pas {type(symbols)}")
+    else:
+        # Chargement MIDI classique
+        processor = MidiSymbolProcessor()
+        symbols = processor.process_midi_file(input_path)
+        if not symbols:
+            raise ValueError(f"Aucun symbole généré pour {input_path}")
     
     # Oracle
     t3, s3, t2, s2, t1, s1 = OracleBuilder.build_oracle(symbols)
@@ -187,8 +200,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
 
         if log_callback and top_probs:
             chosen = sym['pitch']
-            flat = [(s['pitch'], p) for s,p in top_probs]
-            log_callback(f"__markov_probs__:{chosen}:{flat}")
+            choices = [(s['pitch'], p) for s,p in top_probs]
+            log_callback(f"__markov_probs__:{chosen}:{choices}:{next_prob}")
             
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
@@ -300,7 +313,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if log_callback and top_probs:
             p = sym['pitch']
             choices = [(s['pitch'], prob) for s, prob in top_probs]
-            log_callback(f"__markov_probs__:{p}:{choices}")
+            log_callback(f"__markov_probs__:{p}:{choices}:{next_prob}")
 
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])

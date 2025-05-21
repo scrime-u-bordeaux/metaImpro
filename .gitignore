@@ -27,8 +27,8 @@ test.py
 listening.py
 bacasable.py
 
-#ignore notebooks
-/notebook
+#ignore eval folder
+/eval
 
 #ignore uvconfig
 uv.lock

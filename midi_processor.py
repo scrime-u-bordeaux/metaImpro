@@ -3,7 +3,8 @@ import os
 import json
 import numpy as np
 from collections import defaultdict
-from typing import List, Dict, Tuple, Union, Optional
+from typing import List, Dict, Optional
+import copy
 
 """
 Ce fichier sert  à traiter les morceaux midi pour les transformer en symbols :
@@ -198,30 +199,52 @@ class MidiSymbolProcessor:
         """
         return json.loads(json_str)
 
-    def process_dataset(self, dataset_dir: str, output_file: Optional[str] = None) -> Dict[str, List[Dict]]:
+    def process_dataset(self, dataset_dir: str, 
+                        output_file: Optional[str] = None, 
+                        transpose: bool = False, 
+                        transposition_interval: int = 12) -> List[Dict]:
         """
-        Process all MIDI files in a dataset directory.
-        
+        Process all MIDI files in a dataset directory into one flat list of symbols.
+
         Args:
             dataset_dir: Directory containing MIDI files
-            output_file: Optional file path to save the processed dataset
-            
+            output_file: Optional file path to save the processed dataset (as a JSON list)
+            transpose: Optional bool to transpose the dataset in every ton
         Returns:
-            Dictionary mapping filenames to their symbol representations
+            List of symbol dictionaries (notes and chords) from all files
         """
         midi_files = self.find_midi_files(dataset_dir)
-        dataset = {}
-        
+        all_symbols: List[Dict] = []
+
         for midi_file in midi_files:
-            filename = os.path.basename(midi_file)
+            # Extract symbols for this file
             symbols = self.process_midi_file(midi_file)
-            dataset[filename] = symbols
-            
+            #—and append them to the single, global list
+            all_symbols.extend(symbols)
+        if transpose:
+           for i in range(transposition_interval):
+            transposed = self.transpose_symbols(symbols, i+1)
+            all_symbols.extend(transposed) 
+        # Optionally, write out the unified list
         if output_file:
             with open(output_file, 'w') as f:
-                json.dump(dataset, f)
-                
-        return dataset
+                json.dump(all_symbols, f)
+
+        return all_symbols
+    
+    def transpose_symbols(self, symbols: List[Dict], semitone_shift: int) -> List[Dict]:
+        """
+        Transpose a list of symbols by a number of semitones.
+        """
+        transposed = []
+        for sym in symbols:
+            new_sym = copy.deepcopy(sym)
+            if new_sym['type'] == 'note':
+                new_sym['pitch'] += semitone_shift
+            else:
+                new_sym['pitch'] = [p + semitone_shift for p in new_sym['pitch']]
+            transposed.append(new_sym)
+        return transposed
     
     @staticmethod
     def get_symbol_feature_vector(symbol: Dict, max_pitches: int = 8) -> np.ndarray:
@@ -267,13 +290,3 @@ class MidiSymbolProcessor:
             features.append(symbol['velocity'])
         
         return np.array(features)
-
-
-#Exemple d'utilisation de la classe
-processor = MidiSymbolProcessor()
-symbols = processor.process_midi_file('/home/sylogue/stage/metaImpro/corpus/MIDI-Unprocessed_02_R1_2011_MID--AUDIO_R1-D1_08_Track08_wav.midi')
-vectors = np.array([processor.get_symbol_feature_vector(symbol) for symbol in symbols])
-chords = [symbol for symbol in symbols if symbol.get("type") == "chord"]
-pitches = [chord['pitch'] for chord in chords]
-#print([pitch for pitch in pitches if len(pitch) >= 3])
-#print(symbols[:10])

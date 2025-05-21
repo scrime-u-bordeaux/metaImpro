@@ -2,6 +2,8 @@ import mido
 import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
 import os
+import json
+from evaluation import save_prob_history_incremental
 
 model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
 CORPUS_FOLDER = 'corpus'
@@ -11,6 +13,7 @@ BOOL_MAP = {"True": True, "False": False}
 _impro_thread = None
 _stop_event = None
 note_history = []
+prob_history = []
 
 def get_device():
     return mido.get_input_names() #type:ignore
@@ -26,10 +29,11 @@ def get_corpus():
         files = os.listdir(CORPUS_FOLDER)
     except FileNotFoundError:
         return []
-    return [f for f in files if f.lower().endswith('.mid') or f.lower().endswith('.midi')]
+    return [f for f in files if f.lower().endswith('.mid') or f.lower().endswith('.midi') or f.lower().endswith('.json')]
 
 def append_log_entry(msg: str):
     global note_history
+    global prob_history
 
      # Message spécial pour la barre de progression
     if msg.startswith("__progress__"):
@@ -42,10 +46,13 @@ def append_log_entry(msg: str):
     
     if msg.startswith("__markov_probs__"):
         try:
-            _, chosen_pitch_str, probs_str = msg.split(":", 2)
+            _, chosen_pitch_str, probs_str, next_prob = msg.split(":", 3)
             chosen_pitch = chosen_pitch_str
             top_probs = eval(probs_str)  # ex: [(60, 0.5), (62, 0.5)]
-            update_pie_chart(top_probs, chosen_pitch)
+            next_prob = float(next_prob)
+            update_pie_chart(top_probs, chosen_pitch, next_prob)
+            prob_history.append(next_prob)
+
         except Exception as e:
             print(f"Erreur parsing bar chart: {e}")
         return
@@ -64,12 +71,18 @@ def update_oracle_progress(current_state, total_states):
         dpg.set_value("oracle_progress", progress)
 
 
-def update_pie_chart(top_probs, chosen_pitch, bar_tag="markov_pie_series", chosen_tag="chosen_pie"):
+def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_series", chosen_tag="chosen_pie"):
     """
     Met à jour le graphique avec les probabilités des notes sous forme de camembert.
     """
-    if not top_probs:
+    if not top_probs and not next_prob:
         return
+
+    # Si le chosen_pitch n’est pas déjà dans top_probs, ajoute-le
+    if next_prob is not None:
+        present = any(pitch == chosen_pitch for pitch, _ in top_probs)
+        if not present:
+            top_probs = top_probs + [(chosen_pitch, next_prob)]
 
     probs = [p[1] for p in top_probs]  # probabilités
     pitches = [pitch for pitch, _ in top_probs]  # numéros de pitch
@@ -155,7 +168,6 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
 
-
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
     lignes = []
@@ -198,8 +210,11 @@ def on_launch(sender, app_data):
     }
 
     # Lancement du thread d'impro
+    save_prob_history_incremental(prob_history, corpus_file)
     run_impro(config, append_log_entry)
 
+def on_exit():
+    save_prob_history_incremental(prob_history, dpg.get_value('corpus_combo'))
 
 
 dpg.create_context()
@@ -296,7 +311,7 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
         width=800,
         user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'oracle_slider_lvl')
         )
-
+    
     # Camembert Markov
     dpg.add_text("Camembert des pitchs + probas :", tag="markov_text", show=False)
     with dpg.plot(label="Probas Markov", height=400, width=500, show=False, tag="markov_plot"):
@@ -318,10 +333,12 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
                 labels= ["pitch_1 : probs_1", "pitch_2 : probs_2", "pitch_3 : probs_3"],
             )
     dpg.add_text(tag="markov_info_text")
+    
 
 # Création fenêtre
 dpg.create_viewport(title='MetaImpro', width=1200, height=850)
 dpg.setup_dearpygui()
+dpg.set_exit_callback(on_exit)
 dpg.show_viewport()
 dpg.start_dearpygui()
 dpg.destroy_context()
