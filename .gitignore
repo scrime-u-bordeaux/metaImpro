@@ -25,7 +25,7 @@ Thumbs.db
 #ignore test files
 test.py
 listening.py
-bacasable.py
+
 
 #ignore eval folder
 /eval

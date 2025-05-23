@@ -51,7 +51,7 @@ def append_log_entry(msg: str):
             top_probs = eval(probs_str)  # ex: [(60, 0.5), (62, 0.5)]
             next_prob = float(next_prob)
             update_pie_chart(top_probs, chosen_pitch, next_prob)
-            prob_history.append(next_prob)
+            prob_history.append([chosen_pitch,next_prob])
 
         except Exception as e:
             print(f"Erreur parsing bar chart: {e}")

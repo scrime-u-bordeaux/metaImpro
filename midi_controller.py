@@ -1,184 +1,46 @@
-import pygame
+from collections import Counter
+from typing import Dict, Any
+import numpy as np
+import warnings
+import os
+from midi_processor import MidiSymbolProcessor
+import markov as mv
 
-from time import time
-from impro import generate_note_oracle, generate_note_markov
-import factor_oracle as fo
-from create_symbols import extract_features, create_symbole
-import mido
-import fluidsynth
-from markov import transition_matrix
 
-def get_input(transitions_oracle, supply, midSymbols, transitions_markov, mode="markov"):
-    global previous_state
-    previous_state = 0
-    default_velocity = 64
-    previous_pitch = midSymbols[0][0] if midSymbols else 60
-    lenSymbols = len(midSymbols)
-    # Initialisation de pygame pour la gestion des événements clavier.
-    pygame.init()
-    pygame.display.set_mode((200,200))
-    pygame.display.set_mode((1000, 600), pygame.RESIZABLE)
-    pygame.display.set_caption("FluidSynth MIDI Controller")
+class Distribution:
+
+    def __init__(self, path):
+        self.path  = path
+        eval_dir = "/eval"
+
+    def get_distrib(self):
+        if self.path.lower().endswith(('.mid', '.midi')):
+            proc = MidiSymbolProcessor()
+            symbols = proc.find_midi_files(self.path)
+            all_keys = [mv.symbol_to_key(s) for s in symbols]
+            init_pitches = [key[1] for key in all_keys if isinstance(key, tuple) and len(key) > 1]
+            counts = Counter(init_pitches)
+            init_distribution = {pitch: count for pitch, count in counts.items()}   
+
+        elif self.path.lower().endswith('.json'):
+            return 2
+        else:
+            raise ValueError(
+                f"Unsupported file extension {os.path.splitext(self.path)[1]!r}; "
+                "must be .mid, .midi or .json"
+            )
+    def normalize(self):
+        return
     
-    fs = fluidsynth.Synth()
-    fs.start(driver="pulseaudio")
+    def distance(self):
+        return
     
-    # Charger la SoundFont
-    sfid = fs.sfload("/home/sylogue/stage/Roland_SC-88.sf2")
-    fs.program_select(0, sfid, 0, 50)  # Canal 0, SoundFont, Banque 0, Preset au choix
+    def plot_histogram(self):
+        return
     
-    # Liste des touches et définition d'un mapping clavier pour définir un indice pour le contour mélodique
-    keyboard_mapping = {
-    pygame.K_a: 0,
-    pygame.K_z: 1,
-    pygame.K_e: 2,
-    pygame.K_r: 3,
-    pygame.K_t: 4,
-    pygame.K_y: 5,
-    pygame.K_u: 6,
-    pygame.K_i: 7,
-    }
-
-    # Liste des touches utilisées (les clés du mapping)
-    key_to_note = list(keyboard_mapping.keys())
-    note_to_key = list(keyboard_mapping.values())
-
-    # Dictionnaires pour mesurer le temps d'appui et mémoriser la note générée
-    key_start_time = {}
-    note_buffer = {}
+    def plot_density(self):
+        #seaborne kde
+        return
     
-    # Interface graphique simple
-    font = pygame.font.Font(None, 36)
-    screen = pygame.display.get_surface()
-    note_history = {}  # Pour l'affichage
-    note_order = 0
-
-    # Pour le calcul de la durée effective :
-    last_note_end_time = None
-    last_note_duration = 0.1  # Valeur par défaut pour la première note
-    # juste avant la boucle :
-    previous_key_index = None
-
-    run = True
-    while run:
-        screen.fill((240, 240, 240))
-        instructions = font.render("Appuyez sur A, Z, E, R, T, Y, U, I pour jouer", True, (0, 0, 0))
-        screen.blit(instructions, (20, 20))
-        history_title = font.render("Historique des notes:", True, (0, 0, 0))
-        screen.blit(history_title, (20, 60))
-        
-        # Affichage de l'historique (les 10 dernières entrées)
-        y_offset = 100
-        for order in sorted(note_history.keys())[-10:]:
-            info = note_history[order]
-            txt = font.render(f"{order}: {info}", True, (0, 0, 100))
-            screen.blit(txt, (20, y_offset))
-            y_offset += 30
-        
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
-            
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    run = False
-                # Si la touche n'est pas déjà appuyée
-                if event.key in key_to_note and event.key not in key_start_time:
-                    key_start_time[event.key] = time()
-
-                    #calcul du gap
-                    current_index = keyboard_mapping[event.key]
-                    if previous_key_index is None:
-                        gap = 0
-                    else:
-                        gap = current_index - previous_key_index
-                    previous_key_index = current_index
-
-                    # Calcul de la durée effective
-                    current_time = time()
-                    if last_note_end_time is not None:
-                        if current_time >= last_note_end_time:
-                            silence = current_time - last_note_end_time
-                            duration_eff = last_note_duration + silence
-                        else:
-                            duration_eff = last_note_duration
-                    else:
-                        duration_eff = last_note_duration
-                    
-                    # On prépare une chaîne pour afficher la durée du silence
-                    silence_info = ""
-                    if last_note_end_time is not None and current_time >= last_note_end_time:
-                        silence_info = f" | Silence: {silence:.2f} sec"
-                    
-                    # Choix du mode d'improvisation
-                    if mode == 'oracle':
-                        new_state, note, links = generate_note_oracle(
-                            previous_state, duration_eff,
-                            transitions_oracle, supply, midSymbols, gap,p=0.8, contour=False
-                        )
-                        previous_state = new_state
-                    elif mode == 'markov':
-                        next_pitch, next_prob, top_probs = generate_note_markov(previous_pitch, transitions_markov, notes, gap, contour=True)
-                        note = (next_pitch, duration_eff, default_velocity)
-                        previous_pitch = next_pitch
-                        new_state = previous_pitch
-
-                    #activation son de la note
- 
-                    fs.noteon(0, note[0], note[2])
-                    if mode == "oracle":
-                        note_info = (
-                            f"KeyDown - {pygame.key.name(event.key)} : "
-                            f"Pitch {note[0]}, Vel {note[2]}, "
-                            f"État {new_state}/{lenSymbols}{silence_info}, gap {gap}, "
-                            f"lien {links}\n"
-                        )
-                        print(note_info)
-                    elif mode == "markov":
-                        probs_str = ", ".join(f"{note} :{prob:.2f}" for note, prob in top_probs)
-                        note_info = (
-                            f"KeyDown - {pygame.key.name(event.key)} : "
-                            f"Pitch {note[0]},prob {next_prob:.2f}, "
-                            f"Vel {note[2]}{silence_info}, gap {gap}, "
-                            f"2 top prob:  {probs_str}"
-                        )
-                    print(note_info)
-
-                    note_history[note_order] = note_info
-                    note_order += 1
-                    note_buffer[event.key] = (new_state, note[0])
-            
-            #process lorsqu'on relève le doigt du clavier
-            elif event.type == pygame.KEYUP:
-                if event.key in key_to_note and event.key in key_start_time:
-                    duration = time() - key_start_time[event.key]
-                    if event.key in note_buffer:
-                        state, pitch = note_buffer[event.key]
-                        fs.noteoff(0, pitch)
-                        if mode =="oracle":
-                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}, État {state}/{lenSymbols}\n"
-                            print(note_info)
-                        elif mode  =="markov":
-                            note_info = f"KeyUp - {pygame.key.name(event.key)} : Pitch {pitch}, Dur {duration:.2f}\n"
-                            print(note_info)
-                        note_history[note_order] = note_info
-                        note_order += 1
-                        del note_buffer[event.key]
-                    del key_start_time[event.key]
-                    
-                    last_note_end_time = time()
-                    last_note_duration = duration
-                    
-        pygame.display.flip()
-    
-    fs.delete()
-    pygame.quit()
-
-if __name__ == '__main__':
-    # Pipeline de génération des symboles à partir d'un fichier MIDI.
-    midFile = '/home/sylogue/Documents/MuseScore4/Scores/Thirty_Caprices_No._3.mid'
-    midFeatures = extract_features(midFile)
-    midSymbols = create_symbole(midFeatures)   # Liste de tuples (pitch, duration, velocity)
-    transitions_oracle, supply = fo.oracle(sequence=midSymbols)
-    transitions_markov, notes = transition_matrix(midSymbols)
-    get_input(transitions_oracle, supply, midSymbols,transitions_markov, mode="markov")
+d = Distribution("Histogram_probs_001_MIDI-Unprocessed_02_R1_2011_MID--AUDIO_R1-D1_08_Track08_wav.midi")
+d.get_distrib()
