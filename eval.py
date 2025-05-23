@@ -89,7 +89,7 @@ class Eval:
         # Trace
         os.makedirs(self.graph_dir, exist_ok=True)
         plt.figure(figsize=(12, 6))
-        plt.plot(x, y, marker='o', linestyle='-')
+        plt.plot(x, y, linestyle='-')
         plt.xlabel("Index de l'événement")
         plt.ylabel("Probabilité")
         plt.title("Probabilité en fonction de l'index de l'événement")
