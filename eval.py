@@ -8,6 +8,8 @@ import seaborn as sn
 
 class Eval:
 
+    NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
     def __init__(self, path:str):
         self.path  = path
         self.hist_dir = "eval/histogram/"
@@ -38,9 +40,9 @@ class Eval:
         count = Counter(self.pitches)
         return count
     
-    def normalize(self, data):
-        normalized = [tuple(x) if isinstance(x, list) else x for x in data]
-        return normalized
+    def num2note(self, pitch_num: int) -> str:
+        """Convert MIDI pitch number to note name (ignore octave)."""
+        return self.NOTES[pitch_num % 12]
     
     def flatten(self, data):
         flat = []
@@ -89,7 +91,7 @@ class Eval:
         # Trace
         os.makedirs(self.graph_dir, exist_ok=True)
         plt.figure(figsize=(12, 6))
-        plt.plot(x, y, linestyle='-')
+        plt.plot(x, y, marker='.', linestyle='-')
         plt.xlabel("Index de l'événement")
         plt.ylabel("Probabilité")
         plt.title("Probabilité en fonction de l'index de l'événement")
@@ -160,7 +162,7 @@ path2 = "corpus/MIDI-Unprocessed_R1_D1-1-8_mid--AUDIO-from_mp3_02_R1_2015_wav--1
 e1 = Eval(path1)
 e2 = Eval(path2)
 e1.plot_notes()
-e2.plot_notes()
+#e2.plot_notes()
 #e1.plot_histogram()
 #e2.plot_histogram()
 #e1.plot_density()
