@@ -2,7 +2,7 @@ import mido
 import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
 import os
-import json
+import ast
 from evaluation import save_prob_history_incremental
 
 model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
@@ -47,7 +47,7 @@ def append_log_entry(msg: str):
     if msg.startswith("__markov_probs__"):
         try:
             _, chosen_pitch_str, probs_str, next_prob = msg.split(":", 3)
-            chosen_pitch = chosen_pitch_str
+            chosen_pitch = ast.literal_eval(chosen_pitch_str)
             top_probs = eval(probs_str)  # ex: [(60, 0.5), (62, 0.5)]
             next_prob = float(next_prob)
             update_pie_chart(top_probs, chosen_pitch, next_prob)
