@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple, Any, Optional
 import random
+from tqdm import tqdm
 
 class OracleBuilder:
     """
@@ -71,7 +72,7 @@ class OracleBuilder:
         supply = {lvl: {0: -1} for lvl in levels}
         current_state = 0
 
-        for symbol in sequence:
+        for symbol in tqdm(sequence, desc="Building Oracle"):
             sigma_key = OracleBuilder.symbol_to_key(symbol)
             new_state = current_state + 1
 

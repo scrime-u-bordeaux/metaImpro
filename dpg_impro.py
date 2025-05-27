@@ -6,7 +6,7 @@ import fluidsynth
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
 import random
 import numpy as np
-from typing import List
+from typing import List, Any, Dict
 import pygame
 import threading
 import os
@@ -42,63 +42,52 @@ def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     fs.program_select(0, sfid, 0, preset)
     return fs
 
-def load_symbols(input_path: str, markov_order: int = 3, similarity_level: int = 2):
+def load_corpus(input_path: str) -> List[dict]:
     """
     Charge et renvoie la liste des symboles Midi traités.
-    Construit  
-      - l'oracle de FactorOracle (transitions/supplys),
-      - la table VLMC (max_order=1),
-      - la liste de clés uniques pour VLMC.
     """
     ext = os.path.splitext(input_path)[1].lower()
-    if ext in ('.json',):
-        # On part du principe que le JSON contient directement une liste de symboles
+    if ext == '.json':
         with open(input_path, 'r') as f:
             symbols = json.load(f)
         if not isinstance(symbols, list):
-            raise ValueError(f"Le fichier JSON doit contenir une liste de symboles, "
-                             f"pas {type(symbols)}")
+            raise ValueError("JSON must contain a list of symbols")
     else:
-        # Chargement MIDI classique
-        processor = MidiSymbolProcessor()
-        symbols = processor.process_midi_file(input_path)
+        symbols = MidiSymbolProcessor().process_midi_file(input_path)
         if not symbols:
-            raise ValueError(f"Aucun symbole généré pour {input_path}")
-    
-    # Oracle
-    t3, s3, t2, s2, t1, s1 = OracleBuilder.build_oracle(symbols)
-    trans = {3: t3, 2: t2, 1: t1}
-    sup     = {3: s3, 2: s2, 1: s1}
-    transitions = trans[similarity_level]
-    supply = sup[similarity_level]
-    # Markov
-    vlmc_table = build_vlmc_table(symbols, max_order=markov_order, similarity_level=similarity_level)
-    all_keys    = list({symbol_to_key(s) for s in symbols})
+            raise ValueError(f"No symbols generated for {input_path}")
+    return symbols
 
-     # Extraction des hauteurs uniques pour le mode random
-    unique_pitches = get_unique_pitches(symbols)
+def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
+    symbols = load_corpus(input_path)
+    result: Dict[str, Any] = {'symbols': symbols}
 
-    return symbols, transitions, supply, vlmc_table, all_keys, unique_pitches
+    if mode == 'oracle':
+        trans, supp = OracleBuilder.build_oracle(symbols)[::2], OracleBuilder.build_oracle(symbols)[1::2]
+        # Unpack correctly based on similarity level
+        t3, s3, t2, s2, t1, s1 = trans[0], supp[0], trans[1], supp[1], trans[2], supp[2]
+        result['trans_oracle'] = {3: t3, 2: t2, 1: t1}[similarity_level]
+        result['supply'] = {3: s3, 2: s2, 1: s1}[similarity_level]
 
-def get_unique_pitches(symbols):
-    """
-    Makes a liste of symbols into a list of lists of unique_pitches
+    if mode == 'markov':
+        vlmc_table = build_vlmc_table(symbols, max_order=markov_order, similarity_level=similarity_level)
+        all_keys = list({symbol_to_key(s) for s in symbols})
+        result['vlmc_table'] = vlmc_table
+        result['notes'] = all_keys
 
-    """
-    unique_symbols = []
-    seen_pitches = set()
-
-    for symbol in symbols:
-        if symbol['type'] == 'note':
-            pitch = symbol['pitch']
-            if pitch not in seen_pitches:
-                unique_symbols.append(pitch)
-                seen_pitches.add(pitch)
-        elif symbol['type'] == 'chord':
-            # Traitement des accords comme symboles uniques
-            unique_symbols.append(symbol['pitch'])
-    return unique_symbols
-
+    if mode in ('markov', 'random'):
+        # On recalcule la liste des hauteurs disponibles
+        result['unique_pitches'] = []
+        seen = set()
+        for s in symbols:
+            if s['type'] == 'note':
+                p = s['pitch']
+                if p not in seen:
+                    result['unique_pitches'].append(p)
+                    seen.add(p)
+            elif s['type'] == 'chord':
+                result['unique_pitches'].append(tuple(s['pitch']))
+    return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
     """
@@ -376,25 +365,32 @@ def improvisation_loop(config, stop_event, log_callback=None):
             log_callback(msg)
         history.append(msg)
 
-    
-    symbols, trans_oracle, supply, vlmc_table, all_keys, unique_pitches = load_symbols(
-        config['corpus'], markov_order=config['markov_order'], similarity_level=config['sim_lvl']
+    data = load_symbols(
+        config['corpus'], config['mode'],
+        config.get('markov_order', 1), config.get('sim_lvl', 1)
     )
 
-    initial_sym = symbols[0] if symbols else {'type':'note','pitch':60,'duration':0,'velocity':80}
-
-    state = {
-        'prev_state': 0,
-        'symbol_history': [initial_sym],   # for Markov
-        'pitch_history': [initial_sym['pitch'] if initial_sym['type']=='note' else initial_sym['pitch'][0]],
-        'symbols': symbols,
-        'trans_oracle': trans_oracle,
-        'supply': supply,
-        'vlmc_table': vlmc_table,
-        'notes': all_keys,
-        'unique_pitches': unique_pitches,
-        'note_buffer': {}
+    symbols = data['symbols']
+    initial = symbols[0] if symbols else {'type': 'note', 'pitch': 60, 'duration': 0, 'velocity': 80}
+    
+    state: Dict[str, Any] = {
+        'prev_state':    0,
+        'symbol_history':[initial],
+        'pitch_history': [initial['pitch'] if initial['type']=='note' else initial['pitch'][0]],
+        'symbols':       symbols,
+        'note_buffer':   {}
     }
+    # Attach mode-specific data
+    if config['mode'] == 'oracle':
+        state['trans_oracle'] = data['trans_oracle']
+        state['supply'] = data['supply']
+    elif config['mode'] == 'markov':
+        state['vlmc_table'] = data['vlmc_table']
+        state['notes'] = data['notes']
+    # Random and Markov need pitches list
+    if config['mode'] in ('markov', 'random'):
+        state['unique_pitches'] = data['unique_pitches']
+
 
     synth = init_audio(config['sf2_path'])
     

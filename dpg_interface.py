@@ -3,11 +3,17 @@ import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
 import os
 import ast
-from evaluation import save_prob_history_incremental
+import json
+import re
 
 model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
+EVAL_P_DIR = "eval/probs"
+EVAL_G_DIR = "eval/graph"
+EVAL_H_DIR = "eval/histogram"
+BASENAME = "probs"
+EXT = ".json"
 
 # Variables globales pour gérer le thread d'impro
 _impro_thread = None
@@ -137,7 +143,36 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
         
     except Exception as e:
         print(f"Erreur update pie chart: {e}")
-        
+
+def save_prob_history(prob_history, title: str, mode):
+    # Sauvegarde uniquement pour le mode markov
+    if mode != 'markov':
+        return
+
+    os.makedirs(EVAL_P_DIR, exist_ok=True)
+
+    # Nettoie le titre pour enlever toute extension
+    title_clean = os.path.splitext(title)[0]
+
+    # Récupère les indices existants
+    existing = os.listdir(EVAL_P_DIR)
+    pattern = re.compile(rf"^{BASENAME}_(\d{{3}}){re.escape(EXT)}$")
+    indices = [
+        int(m.group(1))
+        for f in existing
+        if (m := pattern.match(f))
+    ]
+    order = dpg.get_value('markov_order')
+    next_idx = max(indices) + 1 if indices else 1
+    filename = f"{BASENAME}_{next_idx:03d}_{title_clean}_ordre{order}{EXT}"
+    path = os.path.join(EVAL_P_DIR, filename)
+
+    with open(path, "w") as fp:
+        json.dump(prob_history, fp, indent=2)
+
+    print(f"Saved {len(prob_history)} probs into {path}")
+    return path
+      
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag, progress_tag, lvl_tag, contour_tag = user_data
     if app_data == 'oracle':
@@ -210,11 +245,12 @@ def on_launch(sender, app_data):
     }
 
     # Lancement du thread d'impro
-    save_prob_history_incremental(prob_history, corpus_file)
+    save_prob_history(prob_history, corpus_file, config['mode'])
     run_impro(config, append_log_entry)
 
 def on_exit():
-    save_prob_history_incremental(prob_history, dpg.get_value('corpus_combo'))
+    mode = dpg.get_value('model_combo')
+    save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
 
 
 dpg.create_context()

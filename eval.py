@@ -17,16 +17,23 @@ class Eval:
         self.pitches, self.probs = self.load_file()
 
     def load_file(self):
-        if self.path.lower().endswith(('.mid', '.midi')):
-            processor = MidiSymbolProcessor()
-            symbols = processor.process_midi_file(self.path)
-            raw = [pitch['pitch'] for pitch in symbols]
+        if self.path.startswith("corpus"):
+            if self.path.lower().endswith(('.mid', '.midi')):
+                processor = MidiSymbolProcessor()
+                symbols = processor.process_midi_file(self.path)
+                raw = [pitch['pitch'] for pitch in symbols]
+            elif self.path.lower().endswith('.json'):
+                with open(self.path, 'r') as f:
+                    data = json.load(f)
+                raw = [pitch['pitch'] for pitch in data]
             self.probs = None
-        elif self.path.lower().endswith('.json'):
-            with open(self.path, 'r') as f:
-                data = json.load(f)
-            raw = [pitch[0] for pitch in data]
-            self.probs = [prob[1] for prob in data]
+
+        elif self.path.startswith("eval"):
+            if self.path.lower().endswith('.json'):
+                with open(self.path, 'r') as f:
+                    data = json.load(f)
+                raw = [pitch[0] for pitch in data]
+                self.probs = [prob[1] for prob in data]
 
         else:
             raise ValueError(
@@ -157,16 +164,13 @@ class Eval:
     
     
 
-path1 = "eval/probs/probs_001_MIDI-Unprocessed_R1_D1-1-8_mid--AUDIO-from_mp3_02_R1_2015_wav--1.json"   
-path2 = "corpus/MIDI-Unprocessed_R1_D1-1-8_mid--AUDIO-from_mp3_02_R1_2015_wav--1.midi"
+path1 = "eval/probs/probs_001_bach_chorales.json"   
+path2 = "corpus/bach_chorales.json"
 e1 = Eval(path1)
 e2 = Eval(path2)
 e1.plot_notes()
-#e2.plot_notes()
-#e1.plot_histogram()
-#e2.plot_histogram()
-#e1.plot_density()
-#e2.plot_density()
-#e1.plot_notes()
-#print("Euclidienne:", e1.distance(e2))
-
+e1.plot_histogram()
+e2.plot_histogram()
+e1.plot_density()
+e2.plot_density()
+print("Euclidienne:", e1.distance(e2))

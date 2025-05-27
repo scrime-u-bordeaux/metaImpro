@@ -163,6 +163,7 @@ def probability_plot(filename: str, mode:str="plot", correction=False):
 
 
 def save_prob_history_incremental(prob_history, title: str):
+
     os.makedirs(EVAL_P_DIR, exist_ok=True)
 
     # Nettoie le titre pour enlever toute extension
