@@ -161,7 +161,17 @@ class Eval:
         plt.savefig(save_path)
         plt.close()
         print(f"Density plot successfully saved in {save_path}")
-    
+
+    def compute_perplexity(self) -> float:
+        """
+        Calcule la perplexité pour la séquence de probabilités chargée (self.probs).
+        Perplexité: exp(-1/N * sum(log p_i)).
+        """
+        if not isinstance(self.probs, list) or len(self.probs) == 0:
+            raise ValueError("Aucune probabilité disponible pour calculer la perplexité.")
+        log_probs = np.log(self.probs)
+        N = len(log_probs)
+        return float(np.exp(- log_probs.sum() / N))
     
 
 path1 = "eval/probs/probs_001_bach_chorales.json"   
@@ -173,4 +183,6 @@ e1.plot_histogram()
 e2.plot_histogram()
 e1.plot_density()
 e2.plot_density()
-print("Euclidienne:", e1.distance(e2))
+
+
+print("Euclidienne:", e1.distance(e2), ", Perplexity:", e1.compute_perplexity())
