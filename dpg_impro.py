@@ -384,7 +384,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if log_callback:
             choices = [(s['pitch'], prob) for s, prob in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
-            
+
     # Jouer la note ou accord
     pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
     vel = velocity
@@ -486,6 +486,9 @@ def improvisation_loop(config, stop_event, log_callback=None):
         beat = 60.0 / 120
         state['bar_dur'] = 4 * beat
         state['accomp_stop'] = threading.Event()
+        global _accomp_stop
+        _accomp_stop = state['accomp_stop']
+
         threading.Thread(
             target=chord_loop,
             args=(synth, state['accomp_stop']),
@@ -552,7 +555,11 @@ def run_impro(config, log_callback=None):
     Returns:
         threading.Thread: Le thread en cours d'exécution (daemon).
     """
-    global _impro_thread, _stop_event
+    global _impro_thread, _stop_event, _accomp_stop
+    # On arrête la chord loop
+    if '_accomp_stop' in globals() and _accomp_stop is not None:
+        _accomp_stop.set()
+
     # Arrêter le thread existant si nécessaire
     if _stop_event is not None:
         _stop_event.set()
