@@ -146,7 +146,7 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
 
 def save_prob_history(prob_history, title: str, mode):
     # Sauvegarde uniquement pour le mode markov
-    if mode != 'markov':
+    if mode not in ['markov', 'accompagnement']:
         return
 
     os.makedirs(EVAL_P_DIR, exist_ok=True)
@@ -184,7 +184,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("oracle_text")
         dpg.hide_item("markov_plot")
         dpg.hide_item("markov_text")
-    elif app_data == 'markov':
+    elif app_data in ['markov', 'accompagnement']:
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
@@ -206,46 +206,47 @@ def on_model_change(sender, app_data, user_data):
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
     lignes = []
-    
-    if dpg.is_item_shown('model_combo'):
-        val = dpg.get_value('model_combo')
-        lignes.append(f"Modèle : {val}")
+    # Récupération du modèle
+    model = dpg.get_value('model_combo')
+    lignes.append(f"Modèle : {model}")
 
-    if dpg.is_item_shown('oracle_slider_p'):
+    # Paramètres spécifiques
+    if model == 'oracle':
         lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider_p'):.2f}")
-
-    if dpg.is_item_shown('markov_combo'):
+    if model in ['markov', 'accompagnement']:
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
+        lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
 
+    # Always include device and morceau
     lignes.append(f"Device MIDI : {dpg.get_value('device_combo')}")
     lignes.append(f"Morceau : {dpg.get_value('corpus_combo')}")
+
+    # Affichage du résumé
     recap = ", ".join(lignes)
     dpg.set_value('summary_text', recap)
 
-    mode = dpg.get_value('model_combo')
-    device = dpg.get_value('device_combo')
+    # Préparation du config
+    mode = model
     corpus_file = dpg.get_value('corpus_combo')
-    p_value = dpg.get_value('oracle_slider_p') if dpg.is_item_shown('oracle_slider_p') else None
-    similarity_level = dpg.get_value('similarity_combo') if dpg.is_item_shown('similarity_combo') else 2
-    markov_order = dpg.get_value('markov_combo') if dpg.is_item_shown('markov_combo') else 1 #mettre  à un sinon la fonction vlmc_table bug pour créer la table de transition 
-    contour = dpg.get_value('contour_combo') if dpg.is_item_shown('contour_combo') else None
-    contour = BOOL_MAP.get(contour)# type:ignore
-    # Construction du chemin complet du corpus
+    p_value = dpg.get_value('oracle_slider_p') if model == 'oracle' else None
+    markov_order = dpg.get_value('markov_combo') if model in ['markov', 'accompagnement'] else None
+    similarity_level = dpg.get_value('similarity_combo') if model in ['markov', 'accompagnement'] else None
+    contour = BOOL_MAP.get(dpg.get_value('contour_combo')) if dpg.is_item_shown('contour_combo') else None
     corpus_path = os.path.join(CORPUS_FOLDER, corpus_file)
 
     config = {
         'mode': mode,
-        'device': device,
+        'device': dpg.get_value('device_combo'),
         'corpus': corpus_path,
-        'p': p_value,
-        'markov_order': int(markov_order),
-        'sim_lvl': int(similarity_level),
+        'p': float(p_value) if p_value is not None else None,
+        'markov_order': int(markov_order) if markov_order is not None else None,
+        'sim_lvl': int(similarity_level) if similarity_level is not None else None,
         'sf2_path': 'Roland_SC-88.sf2',
         'contour': contour
     }
 
-    # Lancement du thread d'impro
-    save_prob_history(prob_history, corpus_file, config['mode'])
+    # Lancement et sauvegarde
+    save_prob_history(prob_history, corpus_file, mode)
     run_impro(config, append_log_entry)
 
 def on_exit():
