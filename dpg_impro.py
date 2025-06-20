@@ -557,6 +557,7 @@ def run_impro(config, log_callback=None):
     if '_accomp_stop' in globals():
         _accomp_stop.set()
         del _accomp_stop
+        
     # Arrêter le thread existant si nécessaire
     if _stop_event is not None:
         _stop_event.set()
