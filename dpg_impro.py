@@ -553,6 +553,7 @@ def run_impro(config, log_callback=None):
         threading.Thread: Le thread en cours d'exécution (daemon).
     """
     global _impro_thread, _stop_event, _accomp_stop
+    
     # On arrête la chord loop
     if '_accomp_stop' in globals():
         _accomp_stop.set()
