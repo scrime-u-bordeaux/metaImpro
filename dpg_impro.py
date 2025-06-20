@@ -238,8 +238,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         raw_note = sym
 
         if log_callback:
-            log_callback(f"__accomp__[{chord_name}]→ {sym['pitch']} (p={next_prob:.2f})")
-
+            choices = [(s['pitch'], p) for s, p in top_probs]
+            log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
 
     # Jouer note ou accord
     pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
@@ -353,7 +353,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         rnd = random.choice(state['unique_pitches'])
         raw_note = rnd if isinstance(rnd, list) else [rnd]
 
-    elif config['mode'] == 'accompagnement':
+    elif config["mode"] == "accompagnement":
         # how many bars have passed since we started
         elapsed  = time() - state['accomp_start']
         bar_index = int(elapsed / state['bar_dur'])
@@ -382,8 +382,9 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         raw_note = sym
 
         if log_callback:
-            log_callback(f"__accomp__[{chord_name}]→ {sym['pitch']} (p={next_prob:.2f})")
-
+            choices = [(s['pitch'], prob) for s, prob in top_probs]
+            log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
+            
     # Jouer la note ou accord
     pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
     vel = velocity
