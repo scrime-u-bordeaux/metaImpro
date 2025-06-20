@@ -1,9 +1,6 @@
 from time import time
-from factor_oracle import OracleBuilder, generate_note_oracle
-from midi_processor import MidiSymbolProcessor
 import mido
 import fluidsynth
-from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
 import random
 import numpy as np
 from typing import List, Any, Dict
@@ -11,6 +8,10 @@ import pygame
 import threading
 import os
 import json
+from factor_oracle import OracleBuilder, generate_note_oracle
+from midi_processor import MidiSymbolProcessor
+from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
+from accompaniment import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
 
 
 log = print # type:ignore
@@ -87,6 +88,18 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
                     seen.add(p)
             elif s['type'] == 'chord':
                 result['unique_pitches'].append(tuple(s['pitch']))
+    if mode == "accompagnement":
+        c7_corpus, csharp7_corpus = get_pitches_by_chord()
+        result['c7_corpus']     = c7_corpus
+        result['csharp7_corpus'] = csharp7_corpus
+        
+        # build separate VLMC tables per chord
+        vlmcs = make_vlmc_for_chord(
+            {'C7': c7_corpus, 'C#7': csharp7_corpus},
+            max_order=markov_order,
+            similarity_level=similarity_level
+        )
+        result['vlmcs'] = vlmcs
     return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
@@ -195,14 +208,46 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
         raw_note = rnd if isinstance(rnd, list) else [rnd]
+    
+    elif config["mode"] == "accompagnement":
+        # figure out how many bars have elapsed
+        elapsed = time() - last_times.get('accomp_start', state['accomp_start'])
+        bar_index = int(elapsed / state['bar_dur'])
+        chord_name = "C7" if (bar_index % 2) == 0 else "C#7"
+
+        # grab that chord's VLMC table + all_keys
+        vlmc_table, all_keys = state['vlmcs'][chord_name]
+
+        # generate one symbol (note) from *that* table
+        sym, next_prob, top_probs = generate_symbol_vlmc(
+            previous_symbols   = state['accomp_history'][chord_name],
+            vlmc_table         = vlmc_table,
+            all_keys           = all_keys,
+            max_order          = config['markov_order'],
+            gap                = gap,
+            contour            = config['contour'],
+            similarity_level   = config['sim_lvl']
+        )
+
+        # update that chord's own history
+        state['accomp_history'][chord_name].append(sym)
+        # (optional: keep it bounded by markov_order)
+        if len(state['accomp_history'][chord_name]) > config['markov_order'] + 1:
+            state['accomp_history'][chord_name].pop(0)
+
+        raw_note = sym
+
+        if log_callback:
+            log_callback(f"__accomp__[{chord_name}]→ {sym['pitch']} (p={next_prob:.2f})")
+
+
     # Jouer note ou accord
     pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
     for p in pitches_to_play:
         synth.noteon(0, p, vel)
     state['note_buffer'][event.key] = pitches_to_play
-    log(
-        f"KD {pygame.key.name(event.key)} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}"
-    )
+    log(f"KD {pygame.key.name(event.key)} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
+    
 
 
 
@@ -307,6 +352,38 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
         raw_note = rnd if isinstance(rnd, list) else [rnd]
+
+    elif config['mode'] == 'accompagnement':
+        # how many bars have passed since we started
+        elapsed  = time() - state['accomp_start']
+        bar_index = int(elapsed / state['bar_dur'])
+        chord_name = "C7" if (bar_index % 2) == 0 else "C#7"
+
+        # lookup that chord’s VLMC table + keys
+        vlmc_table, all_keys = state['vlmcs'][chord_name]
+
+        # generate a symbol from *that* model
+        sym, next_prob, top_probs = generate_symbol_vlmc(
+            previous_symbols   = state['accomp_history'][chord_name],
+            vlmc_table         = vlmc_table,
+            all_keys           = all_keys,
+            max_order          = config['markov_order'],
+            gap                = gap,
+            contour            = config['contour'],
+            similarity_level   = config['sim_lvl']
+        )
+
+        # update only this chord’s history
+        h = state['accomp_history'][chord_name]
+        h.append(sym)
+        if len(h) > config['markov_order'] + 1:
+            h.pop(0)
+
+        raw_note = sym
+
+        if log_callback:
+            log_callback(f"__accomp__[{chord_name}]→ {sym['pitch']} (p={next_prob:.2f})")
+
     # Jouer la note ou accord
     pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
     vel = velocity
@@ -371,7 +448,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
     )
 
     symbols = data['symbols']
-    initial = symbols[0] if symbols else {'type': 'note', 'pitch': 60, 'duration': 0, 'velocity': 80}
+    initial = symbols[0] if symbols else {'type': 'note', 'pitch': 60, 'duration': 0, 'velocity': 110}
     
     state: Dict[str, Any] = {
         'prev_state':    0,
@@ -380,6 +457,10 @@ def improvisation_loop(config, stop_event, log_callback=None):
         'symbols':       symbols,
         'note_buffer':   {}
     }
+
+    synth = init_audio(config['sf2_path'])
+
+
     # Attach mode-specific data
     if config['mode'] == 'oracle':
         state['trans_oracle'] = data['trans_oracle']
@@ -387,12 +468,37 @@ def improvisation_loop(config, stop_event, log_callback=None):
     elif config['mode'] == 'markov':
         state['vlmc_table'] = data['vlmc_table']
         state['notes'] = data['notes']
+
+    elif config['mode'] == 'accompagnement':
+        # instead of blocking chord_loop, prepare VLMC tables once:
+        state['vlmcs'] = make_vlmc_for_chord({
+            "C7":  data['c7_corpus'],
+            "C#7": data['csharp7_corpus'],}, 
+            max_order=config['markov_order'],
+        similarity_level=config['sim_lvl'])
+
+        # per‑chord histories for context
+        state['accomp_history'] = {"C7": [], "C#7": []}
+
+        # timing to figure out which bar we’re in
+        state['accomp_start'] = time()
+        beat = 60.0 / 120
+        state['bar_dur'] = 4 * beat
+        state['accomp_stop'] = threading.Event()
+        threading.Thread(
+            target=chord_loop,
+            args=(synth, state['accomp_stop']),
+            kwargs={
+                "bpm": 120,
+                "velocity": 50,
+                "log_callback": log_callback
+            },
+            daemon=True
+        ).start()
     # Random and Markov need pitches list
     if config['mode'] in ('markov', 'random'):
         state['unique_pitches'] = data['unique_pitches']
-
-
-    synth = init_audio(config['sf2_path'])
+    
     
     last_times = {
         'key_start': {}, 'last_note_end': None,
@@ -430,6 +536,9 @@ def improvisation_loop(config, stop_event, log_callback=None):
             print(f"❗ Erreur d'ouverture du port MIDI : {config['device']}")
 
         pygame.quit()
+
+    if config['mode'] == 'accompagnement':
+        state['accomp_stop'].set()
 
     synth.delete()
 

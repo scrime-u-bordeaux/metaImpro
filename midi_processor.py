@@ -5,7 +5,7 @@ import numpy as np
 from collections import defaultdict
 from typing import List, Dict, Optional
 import copy
-
+from music21 import converter, chord, stream
 """
 Ce fichier sert  à traiter les morceaux midi pour les transformer en symbols :
 On retrouve une fonction pour parse un dataset et des fichiers.
@@ -246,47 +246,131 @@ class MidiSymbolProcessor:
             transposed.append(new_sym)
         return transposed
     
-    @staticmethod
-    def get_symbol_feature_vector(symbol: Dict, max_pitches: int = 8) -> np.ndarray:
+    def create_notesequence_tensor(self, midi_file: str, randomize_chord_order: bool = False) -> np.ndarray:
         """
-        Convert a symbol to a feature vector for model input with consistent size.
+        Create NoteSequence tensor compatible with Piano Genie data format.
         
         Args:
-            symbol: Symbol dictionary (note or chord)
-            max_pitches: Maximum number of pitches in a chord to support (for padding)
+            midi_file: Path to the MIDI file
+            randomize_chord_order: If True, randomize order of simultaneous notes
             
         Returns:
-            Numpy array representing the symbol features with consistent dimensions
+            Numpy array with shape [num_notes, 5] containing:
+            [pitch, velocity, delta_time, start_time, end_time]
         """
-        # Create a feature vector with consistent structure regardless of symbol type
-        # Format: [is_chord, pitch_1, pitch_2, ..., pitch_n, duration, velocity]
-        # Where pitches are padded with -1 (sentinel value) if not present
+        notes = self.extract_notes(midi_file)
+        if not notes:
+            return np.empty((0, 5), dtype=np.float32)
         
-        features = []
+        # Convert to seconds for consistency with Piano Genie format
+        note_data = []
+        for note in notes:
+            note_data.append({
+                'pitch': note['pitch'],
+                'velocity': note['velocity'],
+                'start_time': note['onset'] / 1000.0,  # Convert ms to seconds
+                'end_time': (note['onset'] + note['duration']) / 1000.0
+            })
         
-        if symbol['type'] == 'note':
-            # For a single note: [0 (not chord), pitch, padding, duration, velocity]
-            features.append(0)  # is_chord flag (0 = note)
-            features.append(symbol['pitch'])
-            # Pad remaining pitch slots with -1
-            features.extend([-1] * (max_pitches - 1))
-            features.append(symbol['duration'])
-            features.append(symbol['velocity'])
-        else:  # chord
-            # For a chord: [1 (is chord), sorted pitches (padded), duration, velocity]
-            features.append(1)  # is_chord flag (1 = chord)
+        # Sort by start_time, then by pitch (Piano Genie standard)
+        if randomize_chord_order:
+            # Group by start time for chord randomization
+            time_groups = defaultdict(list)
+            for note in note_data:
+                # Quantize to nearest millisecond for grouping
+                time_key = round(note['start_time'] * 1000)
+                time_groups[time_key].append(note)
             
-            # Sort pitches to create a canonical representation
-            pitches = sorted(symbol['pitch'])
-            
-            # Add pitches, truncating or padding as needed
-            for i in range(max_pitches):
-                if i < len(pitches):
-                    features.append(pitches[i])
-                else:
-                    features.append(-1)  # Padding value
-            
-            features.append(symbol['duration'])
-            features.append(symbol['velocity'])
+            # Randomize within each time group, then sort groups by time
+            sorted_notes = []
+            for time_key in sorted(time_groups.keys()):
+                group = time_groups[time_key]
+                np.random.shuffle(group)
+                # Sort by start_time within shuffled group for stability
+                group.sort(key=lambda n: n['start_time'])
+                sorted_notes.extend(group)
+        else:
+            # Standard sorting: start_time, then pitch
+            sorted_notes = sorted(note_data, key=lambda n: (n['start_time'], n['pitch']))
         
-        return np.array(features)
+        # Filter piano range [21, 108] as in Piano Genie
+        filtered_notes = [n for n in sorted_notes if 21 <= n['pitch'] <= 108]
+        
+        if not filtered_notes:
+            return np.empty((0, 5), dtype=np.float32)
+        
+        # Calculate delta times
+        pitches = np.array([n['pitch'] for n in filtered_notes])
+        velocities = np.array([n['velocity'] for n in filtered_notes])
+        start_times = np.array([n['start_time'] for n in filtered_notes])
+        end_times = np.array([n['end_time'] for n in filtered_notes])
+        
+        # Delta times: difference between consecutive note starts
+        if len(start_times) > 1:
+            # First note gets large delta (100000.0) as in Piano Genie
+            delta_times = np.concatenate([[100000.0], start_times[1:] - start_times[:-1]])
+        else:
+            delta_times = np.array([100000.0])
+        
+        # Stack into tensor format: [pitch, velocity, delta_time, start_time, end_time]
+        tensor = np.stack([pitches, velocities, delta_times, start_times, end_times], axis=1).astype(np.float32)
+        
+        return tensor
+    
+    def process_dataset_to_notesequences(self, dataset_dir: str, 
+                                       output_file: Optional[str] = None,
+                                       randomize_chord_order: bool = False) -> List[np.ndarray]:
+        """
+        Process all MIDI files in a dataset directory to NoteSequence tensors.
+        
+        Args:
+            dataset_dir: Directory containing MIDI files
+            output_file: Optional file path to save tensors (as .npz)
+            randomize_chord_order: If True, randomize chord note order
+            
+        Returns:
+            List of NoteSequence tensors (one per MIDI file)
+        """
+        midi_files = self.find_midi_files(dataset_dir)
+        notesequences = []
+        
+        for midi_file in midi_files:
+            tensor = self.create_notesequence_tensor(midi_file, randomize_chord_order)
+            if tensor.shape[0] > 0:  # Only add non-empty sequences
+                notesequences.append(tensor)
+        
+        if output_file:
+            # Save as compressed numpy format
+            np.savez_compressed(output_file, *notesequences)
+        
+        return notesequences
+    
+    @staticmethod
+    def demidify_tensor(tensor: np.ndarray) -> np.ndarray:
+        """
+        Transform MIDI pitches [21,108] to [0,87] in NoteSequence tensor.
+        
+        Args:
+            tensor: NoteSequence tensor with MIDI pitches in first column
+            
+        Returns:
+            Tensor with transformed pitches
+        """
+        result = tensor.copy()
+        result[:, 0] = tensor[:, 0] - 21  # pitch column
+        return result
+    
+    @staticmethod
+    def remidify_tensor(tensor: np.ndarray) -> np.ndarray:
+        """
+        Transform [0,87] to MIDI pitches [21,108] in NoteSequence tensor.
+        
+        Args:
+            tensor: NoteSequence tensor with transformed pitches in first column
+            
+        Returns:
+            Tensor with MIDI pitches
+        """
+        result = tensor.copy()
+        result[:, 0] = tensor[:, 0] + 21  # pitch column
+        return result

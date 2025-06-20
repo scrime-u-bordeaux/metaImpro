@@ -6,7 +6,7 @@ import ast
 import json
 import re
 
-model_list = ['oracle', 'markov', 'random', 'SuperTransformerDiffuseurLSTM']
+model_list = ['oracle', 'markov', 'random', 'accompagnement', 'SuperTransformerDiffuseurLSTM']
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
 EVAL_P_DIR = "eval/probs"
@@ -303,7 +303,7 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
         dpg.add_slider_float(
             tag="oracle_slider_p",
             label="p",
-            default_value=0.5,
+            default_value=0.7,
             min_value=0.0,
             max_value=1.0,
             width=200

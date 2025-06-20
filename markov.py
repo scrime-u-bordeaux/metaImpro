@@ -3,72 +3,76 @@ import numpy as np
 from typing import List, Dict, Tuple, Any
 import random
 
-def symbol_to_key(symbol: Dict[str, Any]) -> Tuple:
+def symbol_to_key(symbol: Any) -> Tuple:
     """
-    Transforme un symbole (note ou accord dict) en tuple hashable.
+    Transforme un symbole (note ou accord) ou un pitch simple en tuple hashable.
+    Accepte:
+      - dict comme avant
+      - int    -> note avec durée=1.0, velocity=64
+      - list/tuple d'int -> accord avec durée=1.0, velocity=64
     """
-    if symbol["type"] == "note":
-        return ("note", symbol["pitch"], symbol["duration"], symbol["velocity"])
-    elif symbol["type"] == "chord":
-        return (
-            "chord",
-            tuple(sorted(symbol["pitch"])),
-            symbol["duration"],
-            symbol["velocity"],
-        )
-    else:
-        raise ValueError(f"Type de symbole inconnu: {symbol.get('type')}")
+    # Simple note pitch
+    if isinstance(symbol, int):
+        return ("note", symbol, 1.0, 64)
+
+    # Simple chord as list/tuple of pitches
+    if isinstance(symbol, (list, tuple)) and all(isinstance(p, int) for p in symbol):
+        return ("chord", tuple(sorted(symbol)), 1.0, 64)
+
+    # Existing dict handling
+    if isinstance(symbol, dict):
+        if symbol.get("type") == "note":
+            return ("note", symbol["pitch"], symbol.get("duration", 1.0), symbol.get("velocity", 64))
+        elif symbol.get("type") == "chord":
+            return (
+                "chord",
+                tuple(sorted(symbol["pitch"])),
+                symbol.get("duration", 1.0),
+                symbol.get("velocity", 64),
+            )
+    
+    raise ValueError(f"Type de symbole inconnu ou non supporté: {symbol!r}")
+
 
 
 def key_to_symbol(key: Tuple) -> Dict[str, Any]:
     """
-    Convertit une clé tuple en symbole dict, en gérant les longueurs variables selon le niveau de similarité.
+    Convertit une clé tuple en symbole dict.
+    (inchangé)
     """
     if not key:
         raise ValueError("Clé vide fournie à key_to_symbol.")
 
     t = key[0]
-
     if t == "note":
         if len(key) == 4:
             _, pitch, duration, velocity = key
         elif len(key) == 3:
             _, pitch, duration = key
-            velocity = 64  # Valeur par défaut
+            velocity = 64
         elif len(key) == 2:
             _, pitch = key
-            duration = 1.0  # Valeur par défaut
-            velocity = 64   # Valeur par défaut
+            duration, velocity = 1.0, 64
         else:
             raise ValueError(f"Clé 'note' invalide : {key}")
-        return {
-            "type": "note",
-            "pitch": pitch,
-            "duration": duration,
-            "velocity": velocity,
-        }
+        return {"type": "note", "pitch": pitch, "duration": duration, "velocity": velocity}
 
     elif t == "chord":
         if len(key) == 4:
             _, pitches, duration, velocity = key
         elif len(key) == 3:
             _, pitches, duration = key
-            velocity = 64  # Valeur par défaut
+            velocity = 64
         elif len(key) == 2:
             _, pitches = key
-            duration = 1.0  # Valeur par défaut
-            velocity = 64   # Valeur par défaut
+            duration, velocity = 1.0, 64
         else:
             raise ValueError(f"Clé 'chord' invalide : {key}")
-        return {
-            "type": "chord",
-            "pitch": list(pitches),
-            "duration": duration,
-            "velocity": velocity,
-        }
+        return {"type": "chord", "pitch": list(pitches), "duration": duration, "velocity": velocity}
 
     else:
         raise ValueError(f"Type de clé inconnu : {t}")
+
 
 def truncate_key(key: Tuple, similarity_level: int) -> Tuple:
     """
@@ -89,12 +93,11 @@ def truncate_key(key: Tuple, similarity_level: int) -> Tuple:
     
 
 def build_vlmc_table(
-    symbols: List[Dict[str, Any]],
-    max_order: int = 3,
-    similarity_level: int = 3
+    symbols: List[Any], max_order: int = 3, similarity_level: int = 3
 ) -> Dict[Tuple, Dict[Tuple, int]]:
     """
-    Construit la table VLMC : contexte → {successeur → count}.
+    Construit la table VLMC: contexte → {successeur → count}.
+    Accepte symbols sous forme de dict, int, ou list[int].
     """
     table: Dict[Tuple, Dict[Tuple, int]] = defaultdict(lambda: defaultdict(int))
     full_keys = [symbol_to_key(s) for s in symbols]
@@ -114,12 +117,12 @@ def build_vlmc_table(
 
 
 def generate_symbol_vlmc(
-    previous_symbols: List[Dict[str, Any]],
+    previous_symbols: List[Any],
     vlmc_table: Dict[Tuple, Dict[Tuple, int]],
     all_keys: List[Tuple],
     max_order: int = 3,
     gap: int = 0,
-    contour: bool = True, 
+    contour: bool = True,
     similarity_level: int = 3
 ) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
