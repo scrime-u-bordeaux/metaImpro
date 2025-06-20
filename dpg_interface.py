@@ -174,6 +174,7 @@ def save_prob_history(prob_history, title: str, mode):
     return path
       
 def on_model_change(sender, app_data, user_data):
+
     slider_tag, markov_tag, progress_tag, lvl_tag, contour_tag = user_data
     if app_data == 'oracle':
         dpg.show_item(slider_tag)

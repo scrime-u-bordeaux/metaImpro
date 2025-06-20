@@ -541,9 +541,6 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         pygame.quit()
 
-    if config['mode'] == 'accompagnement':
-        state['accomp_stop'].set()
-
     synth.delete()
 
 
@@ -557,9 +554,9 @@ def run_impro(config, log_callback=None):
     """
     global _impro_thread, _stop_event, _accomp_stop
     # On arrête la chord loop
-    if '_accomp_stop' in globals() and _accomp_stop is not None:
+    if '_accomp_stop' in globals():
         _accomp_stop.set()
-
+        del _accomp_stop
     # Arrêter le thread existant si nécessaire
     if _stop_event is not None:
         _stop_event.set()
