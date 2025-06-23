@@ -5,7 +5,7 @@ import numpy as np
 from collections import defaultdict
 from typing import List, Dict, Optional
 import copy
-from music21 import converter, chord, stream
+
 """
 Ce fichier sert  à traiter les morceaux midi pour les transformer en symbols :
 On retrouve une fonction pour parse un dataset et des fichiers.
@@ -22,7 +22,9 @@ class MidiSymbolProcessor:
     with an efficient representation for real-time generation.
     """
     
-    def __init__(self, inner_chord_threshold_ms: float = 50.0, maximum_chord_threshold_ms: float = 200.0):
+    def __init__(self, inner_chord_threshold_ms: float = 50.0, 
+                maximum_chord_threshold_ms: float = 200.0,
+                include_chords = True):
         """
         Initialize the MIDI symbol processor.
         
@@ -32,7 +34,7 @@ class MidiSymbolProcessor:
         """
         self.inner_chord_threshold_ms = inner_chord_threshold_ms
         self.maximum_chord_threshold_ms = maximum_chord_threshold_ms
-
+    
 
     def find_midi_files(self, base_dir: str) -> List[str]:
         """

@@ -33,3 +33,6 @@ listening.py
 #ignore uvconfig
 uv.lock
 pyproject.toml
+
+#ignore pt files
+*.pt
