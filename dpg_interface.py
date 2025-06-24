@@ -6,7 +6,7 @@ import ast
 import json
 import re
 
-model_list = ['oracle', 'markov', 'random', 'accompagnement', 'SuperTransformerDiffuseurLSTM']
+model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
 EVAL_P_DIR = "eval/probs"
@@ -36,6 +36,14 @@ def get_corpus():
     except FileNotFoundError:
         return []
     return [f for f in files if f.lower().endswith('.mid') or f.lower().endswith('.midi') or f.lower().endswith('.json')]
+
+def get_pt_files(folder="piano_genie"):
+    """Récupère la liste des fichiers .pt dans le dossier piano_genie."""
+    try:
+        files = os.listdir(folder)
+    except FileNotFoundError:
+        return []
+    return [f for f in files if f.lower().endswith('.pt')]
 
 def append_log_entry(msg: str):
     global note_history
@@ -176,6 +184,30 @@ def save_prob_history(prob_history, title: str, mode):
 def on_model_change(sender, app_data, user_data):
 
     slider_tag, markov_tag, progress_tag, lvl_tag, contour_tag = user_data
+    if app_data == 'Autoencoder':
+        # replace corpus list with .pt checkpoints
+        pt_items = get_pt_files("piano_genie")
+        dpg.configure_item('corpus_combo',
+                           items=pt_items,
+                           default_value=pt_items[0] if pt_items else None,
+                           label='Choisissez les poids')
+        # hide irrelevant controls
+        dpg.hide_item(slider_tag)
+        dpg.hide_item(markov_tag)
+        dpg.hide_item(progress_tag)
+        dpg.hide_item(lvl_tag)
+        dpg.hide_item(contour_tag)
+        dpg.hide_item("markov_plot")
+        dpg.hide_item("oracle_text")
+        dpg.hide_item("markov_text")
+    else:
+        # restore MIDI/json listing
+        corpus_items = get_corpus()
+        dpg.configure_item('corpus_combo',
+                           items=corpus_items,
+                           default_value=corpus_items[0] if corpus_items else None,
+                           label="Choisissez un morceau")
+    # fonctionnement normal
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
         dpg.show_item(progress_tag)
@@ -207,7 +239,6 @@ def on_model_change(sender, app_data, user_data):
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
     lignes = []
-    # Récupération du modèle
     model = dpg.get_value('model_combo')
     lignes.append(f"Modèle : {model}")
 
@@ -217,39 +248,54 @@ def on_launch(sender, app_data):
     if model in ['markov', 'accompagnement']:
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
+    if model == 'Autoencoder':
+        lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
-    # Always include device and morceau
+    # Toujours afficher device
     lignes.append(f"Device MIDI : {dpg.get_value('device_combo')}")
-    lignes.append(f"Morceau : {dpg.get_value('corpus_combo')}")
 
-    # Affichage du résumé
-    recap = ", ".join(lignes)
-    dpg.set_value('summary_text', recap)
+    # Récapitulatif
+    dpg.set_value('summary_text', ", ".join(lignes))
 
-    # Préparation du config
-    mode = model
-    corpus_file = dpg.get_value('corpus_combo')
-    p_value = dpg.get_value('oracle_slider_p') if model == 'oracle' else None
-    markov_order = dpg.get_value('markov_combo') if model in ['markov', 'accompagnement'] else None
-    similarity_level = dpg.get_value('similarity_combo') if model in ['markov', 'accompagnement'] else None
-    contour = BOOL_MAP.get(dpg.get_value('contour_combo')) if dpg.is_item_shown('contour_combo') else None
-    corpus_path = os.path.join(CORPUS_FOLDER, corpus_file)
-
-    config = {
-        'mode': mode,
+    # Construction du config dict
+    # On récupère la valeur de corpus_combo, qui sera soit un .mid/.json, soit un .pt selon on_model_change
+    chosen = dpg.get_value('corpus_combo')
+    # Common fields (toujours présents)
+    cfg = {
+        'mode': model,
         'device': dpg.get_value('device_combo'),
-        'corpus': corpus_path,
-        'p': float(p_value) if p_value is not None else None,
-        'markov_order': int(markov_order) if markov_order is not None else None,
-        'sim_lvl': int(similarity_level) if similarity_level is not None else None,
         'sf2_path': 'Roland_SC-88.sf2',
-        'contour': contour
+        # champs partagés (même si None)
+        'p': None,
+        'markov_order': None,
+        'sim_lvl': None,
+        'contour': None,
+        'corpus': None,
     }
 
-    # Lancement et sauvegarde
-    save_prob_history(prob_history, corpus_file, mode)
-    run_impro(config, append_log_entry)
+    # Remplissage selon mode
+    if model == 'oracle':
+        cfg['p']            = float(dpg.get_value('oracle_slider_p'))
+        cfg['contour']      = BOOL_MAP[dpg.get_value('contour_combo')]
+        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
+    elif model in ['markov', 'accompagnement']:
+        cfg['markov_order'] = int(dpg.get_value('markov_combo'))
+        cfg['sim_lvl']      = int(dpg.get_value('similarity_combo'))
+        cfg['contour']      = BOOL_MAP[dpg.get_value('contour_combo')]
+        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
+    elif model == 'random':
+        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
+    elif model == 'Autoencoder':
+        # On met le chemin du .pt dans corpus pour que load_symbols / improvisation_loop ne plante pas
+        cfg['corpus'] = os.path.join('piano_genie', chosen)
+        # pas de p, pas de markov, pas de contour, sim_lvl etc.
+    else:
+        # fallback (ne devrait pas arriver)
+        cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
 
+    # Sauvegarde et lancement
+    save_prob_history(prob_history, chosen, model)
+    run_impro(cfg, append_log_entry)
 def on_exit():
     mode = dpg.get_value('model_combo')
     save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
