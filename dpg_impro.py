@@ -12,8 +12,7 @@ from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
 from accompaniment import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
-import model as md
-import torch
+from impro_genie import PianoGenieEngine
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
@@ -67,12 +66,7 @@ def load_corpus(input_path: str) -> List[dict]:
 def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
     
     if mode == "Autoencoder":
-        with open("piano_genie/cfg.json", "r") as f:
-            cfg = json.load(f)
-        ae = md.PianoGenieAutoencoder(cfg)
-        ae.load_state_dict(torch.load(input_path))
-        ae.eval()
-        return {"model": ae}
+        PianoGenieEngine(input_path, "piano_genie/cfg.json")
     
     symbols = load_corpus(input_path)
     result: Dict[str, Any] = {'symbols': symbols}
