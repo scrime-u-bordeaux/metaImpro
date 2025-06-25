@@ -26,7 +26,7 @@ class PianoGenieEngine:
             with open(config_path, 'r') as f:
                 self.cfg = json.load(f)
         else:
-            # Default configuration matching your training setup
+            # Default configuration
             self.cfg = {
                 "num_buttons": 8,
                 "model_rnn_dim": 128,
