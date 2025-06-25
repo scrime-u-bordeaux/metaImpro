@@ -12,7 +12,8 @@ from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
 from accompaniment import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
-
+import model as md
+import torch
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
@@ -59,15 +60,22 @@ def load_corpus(input_path: str) -> List[dict]:
             raise ValueError(f"No symbols generated for {input_path}")
     elif ext == ".pt":
         pass
+    else:
+        raise ValueError(f"Extension de corpus non supportée : {ext}")
     return symbols
 
 def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
+    
+    if mode == "Autoencoder":
+        with open("piano_genie/cfg.json", "r") as f:
+            cfg = json.load(f)
+        ae = md.PianoGenieAutoencoder(cfg)
+        ae.load_state_dict(torch.load(input_path))
+        ae.eval()
+        return {"model": ae}
+    
     symbols = load_corpus(input_path)
     result: Dict[str, Any] = {'symbols': symbols}
-
-    if mode == "Autoencoder":
-        # For AE we just hand back the checkpoint path; no symbols needed
-        return {"checkpoint_path": input_path}
     
     if mode == 'oracle':
         trans, supp = OracleBuilder.build_oracle(symbols)[::2], OracleBuilder.build_oracle(symbols)[1::2]
@@ -391,7 +399,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if log_callback:
             choices = [(s['pitch'], prob) for s, prob in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
-            
+
     elif config['mode'] == 'Autoencoder':
         print("f")
     # Jouer la note ou accord
