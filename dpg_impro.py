@@ -53,16 +53,22 @@ def load_corpus(input_path: str) -> List[dict]:
             symbols = json.load(f)
         if not isinstance(symbols, list):
             raise ValueError("JSON must contain a list of symbols")
-    else:
+    elif ext == ".mid" or ext == ".midi":
         symbols = MidiSymbolProcessor().process_midi_file(input_path)
         if not symbols:
             raise ValueError(f"No symbols generated for {input_path}")
+    elif ext == ".pt":
+        pass
     return symbols
 
 def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
     symbols = load_corpus(input_path)
     result: Dict[str, Any] = {'symbols': symbols}
 
+    if mode == "Autoencoder":
+        # For AE we just hand back the checkpoint path; no symbols needed
+        return {"checkpoint_path": input_path}
+    
     if mode == 'oracle':
         trans, supp = OracleBuilder.build_oracle(symbols)[::2], OracleBuilder.build_oracle(symbols)[1::2]
         # Unpack correctly based on similarity level
@@ -99,7 +105,7 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
             max_order=markov_order,
             similarity_level=similarity_level
         )
-        result['vlmcs'] = vlmcs
+        result['vlmcs'] = vlmcs   
     return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
@@ -240,7 +246,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         if log_callback:
             choices = [(s['pitch'], p) for s, p in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
-
+    elif config['mode'] == 'Autoencoder':
+        print("f")
     # Jouer note ou accord
     pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
     for p in pitches_to_play:
@@ -384,7 +391,9 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         if log_callback:
             choices = [(s['pitch'], prob) for s, prob in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
-
+            
+    elif config['mode'] == 'Autoencoder':
+        print("f")
     # Jouer la note ou accord
     pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
     vel = velocity

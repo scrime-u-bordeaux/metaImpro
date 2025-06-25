@@ -36,3 +36,4 @@ pyproject.toml
 
 #ignore pt files
 *.pt
+*.png

@@ -26,39 +26,68 @@ def chord_loop(synth,
                stop_event,
                bpm: int = 120,
                velocity: int = 80,
+               lower_octave: int = 12,
                log_callback=None):
     """
-    Play an endless 4/4 loop alternating C7 and C#7.
+    Play an endless piano-stride 4/4 loop over C7 and C#7.
+
+    On each bar:
+      - Beats 1 & 3: left-hand bass (root one octave down)
+      - Beats 2 & 4: left-hand chord (root position)
 
     Args:
-      synth:    fluidsynth.Synth already initialized.
+      synth:      fluidsynth.Synth already initialized.
       stop_event: threading.Event to break the loop.
-      bpm:      beats per minute (default 120).
-      velocity: MIDI velocity for all chord notes.
+      bpm:        beats per minute.
+      velocity:   MIDI velocity for all notes.
+      lower_octave: number of semitones to transpose left-hand bass down.
       log_callback: optional fn(str) to receive log messages.
     """
-
-    c7_chord, c7_sharp_chord = [60,64,67,70], [61,65,68,71]
+    roots = [60, 61]  # C and C#
+    fifths = [67, 68]  # G and G# (a perfect fifth above the root)
+    chords = [
+        [64, 67, 70],   # C7 (E, G, Bb)
+        [65, 68, 71]    # C#7 (F, G#, B)
+    ]
 
     beat_dur = 60.0 / bpm
-    bar_dur  = beat_dur * 4
-    chords   = [c7_chord, c7_sharp_chord]
+    # stride pattern: bass, chord, fifth, chord
+    pattern = ["bass", "chord", "fifth", "chord"]
     idx = 0
 
     while not stop_event.is_set():
-        chord = chords[idx % 2]
-        # Note‐on all voices
-        for p in chord:
-            synth.noteon(0, p, velocity)
-        if log_callback:
-            log_callback(f"Accompaniment: playing {'C7' if idx%2==0 else 'C#7'} → {chord}")
-        # hold for one bar
-        sleep(bar_dur)
-        # Note‐off
-        for p in chord:
-            synth.noteoff(0, p)
-        idx += 1
+        chord_idx = idx % 2
+        root = roots[chord_idx]
+        fifth = fifths[chord_idx]
+        chord = chords[chord_idx]
 
+        for step, part in enumerate(pattern, start=1):
+            if stop_event.is_set():
+                break
+            notes_to_play = []
+            if part == "bass":
+                # play root one octave down
+                notes_to_play = [root - lower_octave]
+            elif part == "fifth":
+                # play fifth one octave down
+                notes_to_play = [fifth - lower_octave]
+            else:
+                # play full chord in LH
+                notes_to_play = chord
+
+            for p in notes_to_play:
+                synth.noteon(0, p, velocity)
+            if log_callback:
+                log_callback(f"Stride: Bar {idx+1}, beat {step}: {part} → {notes_to_play}")
+
+            # hold for one beat
+            sleep(beat_dur)
+
+            # note off for this part
+            for p in notes_to_play:
+                synth.noteoff(0, p)
+
+        idx += 1
 
 def make_vlmc_for_chord(symbol_sequences, max_order=3, similarity_level=1):
     """

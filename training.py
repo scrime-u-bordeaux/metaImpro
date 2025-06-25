@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import model as md
 from midi_processor import MidiSymbolProcessor
+import matplotlib.pyplot as plt
 
 CFG = {
     "seed": 0,
@@ -22,7 +23,8 @@ CFG = {
     "loss_contour_multiplier": 1.0,
     "summarize_frequency": 128,
     "eval_frequency": 128,
-    "max_num_steps": 50000
+    "max_num_steps": 50000,
+    "early_stopping": 5000,
 }
 
 run_dir = pathlib.Path("piano_genie")
@@ -36,8 +38,9 @@ processor = MidiSymbolProcessor(
     include_chords=False
 )
 
-midi_folder = "/home/sylogue/stage/dataset/maestro-v3.0.0-midi"
-cache_path = run_dir / f"{pathlib.Path(midi_folder).name}_performances.json"
+midi_folder = "/home/sylogue/midi_xml/Weimar_jazz_database"
+dataset_name = pathlib.Path(midi_folder).name
+cache_path = run_dir / f"{dataset_name}_performances.json"
 
 # --- Build or load cached performances ---
 if cache_path.exists():
@@ -52,7 +55,7 @@ else:
         perf = [
             (n['onset'] / 1000.0,
              n['duration'] / 1000.0,
-             n['pitch'],
+             n['pitch'] - md.PIANO_LOWEST_KEY_MIDI_PITCH,
              n['velocity'])
             for n in notes
         ]
@@ -61,6 +64,7 @@ else:
     print(f"Extracted {len(all_performances)} performances; caching to disk...")
     with open(cache_path, "w") as f:
         json.dump(all_performances, f)
+
 
 # Shuffle + split
 random.seed(CFG['seed'])
@@ -87,51 +91,64 @@ for n, p in model.named_parameters():
 
 optimizer = torch.optim.Adam(model.parameters(), lr=CFG["lr"])
 
+
+# Subsamples performances to create a minibatch
 def performances_to_batch(performances, device, train=True):
-    """Turns a list of performances into (keys, delta_times) tensors."""
     batch_k = []
     batch_t = []
     for p in performances:
-        # pick a subsequence
+        # Subsample seq_len notes from performance
+        assert len(p) >= CFG["seq_len"]
         if train:
-            offset = random.randrange(0, len(p) - CFG["seq_len"])
+            subsample_offset = random.randrange(0, len(p) - CFG["seq_len"])
         else:
-            offset = 0
-        subseq = p[offset : offset + CFG["seq_len"]]
+            subsample_offset = 0
+        subsample = p[subsample_offset : subsample_offset + CFG["seq_len"]]
+        assert len(subsample) == CFG["seq_len"]
 
-        # optionally augment and always clamp pitches
+        # Data augmentation
         if train:
-            sf = 1 + (random.random() * 2 - 1) * CFG["data_augment_time_stretch_max"]
-            tr = random.randint(
-                -CFG["data_augment_transpose_max"],
-                CFG["data_augment_transpose_max"]
+            stretch_factor = random.random() * CFG["data_augment_time_stretch_max"] * 2
+            stretch_factor += 1 - CFG["data_augment_time_stretch_max"]
+            transposition_factor = random.randint(
+                -CFG["data_augment_transpose_max"], CFG["data_augment_transpose_max"]
             )
-        keys = []
-        for onset, dur, pitch, vel in subseq:
-            if train:
-                pitch = pitch + tr
-            # clamp into [0, PIANO_NUM_KEYS-1]
-            pitch = max(0, min(pitch, md.PIANO_NUM_KEYS - 1))
-            keys.append(pitch)
-        batch_k.append(keys)
+            subsample = [
+                (
+                    n[0] * stretch_factor,
+                    n[1] * stretch_factor,
+                    max(0, min(n[2] + transposition_factor, md.PIANO_NUM_KEYS - 1)),
+                    n[3],
+                )
+                for n in subsample
+            ]
+        
+        # Key features
+        batch_k.append([n[2] for n in subsample])
 
-        # compute clipped delta-times
-        times = np.array([onset for onset, *_ in subseq], dtype=np.float32)
-        dt = np.diff(times, prepend=times[0])
-        dt = np.clip(dt, 0.0, CFG["data_delta_time_max"])
-        batch_t.append(dt)
+        # Onset features
+        # NOTE: For stability, we pass delta time to Piano Genie instead of time.
+        t = np.diff([n[0] for n in subsample])
+        t = np.concatenate([[1e8], t])
+        t = np.clip(t, 0, CFG["data_delta_time_max"])
+        batch_t.append(t)
 
-    # stack to a single numpy array (avoids the slow warning) then to tensor
-    k_np = np.array(batch_k, dtype=np.int64)
-    t_np = np.stack(batch_t).astype(np.float32)
-
-    return (
-        torch.from_numpy(k_np).to(device),
-        torch.from_numpy(t_np).to(device),
-    )
+    return (torch.tensor(batch_k).long(), torch.tensor(batch_t).float())
 
 step = 0
 best_eval_loss = float("inf")
+
+#early stopping 
+last_improvement = 0
+
+# storing losses for ploting
+train_rec_losses = []
+train_margin_losses = []
+train_contour_losses = []
+train_total_losses   = []
+
+eval_rec_losses  = []
+eval_contour_rates = []
 
 while CFG["max_num_steps"] is None or step < CFG["max_num_steps"]:
     # --- evaluation ---
@@ -140,6 +157,7 @@ while CFG["max_num_steps"] is None or step < CFG["max_num_steps"]:
         all_rec, all_viol = [], []
         with torch.no_grad():
             for i in range(0, len(DATASET["validation"]), CFG["batch_size"]):
+                
                 vk, vt = performances_to_batch(
                     DATASET["validation"][i : i + CFG["batch_size"]],
                     device, train=False
@@ -164,9 +182,12 @@ while CFG["max_num_steps"] is None or step < CFG["max_num_steps"]:
 
         avg_rec = float(np.mean(all_rec))
         if avg_rec < best_eval_loss:
-            torch.save(model.state_dict(), run_dir / "model.pt")
+            torch.save(model.state_dict(), run_dir / f"model_{dataset_name}.pt")
             best_eval_loss = avg_rec
+            last_improvement = step 
 
+        eval_rec_losses.append(avg_rec)
+        eval_contour_rates.append(float(np.mean(all_viol)))
         print(f"{step:6d} EVAL → rec_loss={avg_rec:.4f}, contour_violation={np.mean(all_viol):.4f}")
         model.train()
 
@@ -196,10 +217,52 @@ while CFG["max_num_steps"] is None or step < CFG["max_num_steps"]:
     optimizer.step()
     step += 1
 
+    # early‐stopping check
+    if step - last_improvement >= CFG["early_stopping"]:
+        print(f"Stopping early at step {step}: no eval improvement " +
+              f"in the last {CFG["early_stopping"]} steps (since step {last_improvement}).")
+        break
+
+    train_rec_losses.append(loss_recons.item())
+    train_margin_losses.append(loss_margin.item())
+    train_contour_losses.append(loss_contour.item())
+    train_total_losses.append(loss.item())
+
     if step % CFG["summarize_frequency"] == 0:
         print(
             f"{step:6d} TRAIN → rec={loss_recons.item():.4f}, "
             f"margin={loss_margin.item():.4f}, contour={loss_contour.item():.4f}"
         )
 
-print(f"Best model saved to: {run_dir/'model.pt'}")
+print(f"Best model saved to: {run_dir/f"model_{dataset_name}.pt"}")
+
+
+steps = range(1, len(train_rec_losses) + 1)
+plt.figure()
+plt.plot(steps, train_rec_losses,     label='Reconstruction')
+plt.plot(steps, train_margin_losses,  label='Margin')
+plt.plot(steps, train_contour_losses, label='Contour')
+plt.plot(steps, train_total_losses,   label='Total')  
+plt.xlabel(f'Buckets of {CFG["summarize_frequency"]} steps')
+plt.ylabel('Loss')
+plt.legend()
+plt.title('Training Loss Curves')
+train_path = run_dir / f"{dataset_name}_train_losses.png"
+plt.savefig(train_path, dpi=300)
+plt.close()
+
+# --- Evaluation curves ---
+eval_steps = [i * CFG['eval_frequency'] for i in range(len(eval_rec_losses))]
+plt.figure()
+plt.plot(eval_steps, eval_rec_losses,    marker='o', label='Eval Reconstruction')
+plt.plot(eval_steps, eval_contour_rates, marker='x', label='Contour Violation Rate')
+plt.xlabel('Training Step')
+plt.ylabel('Metric')
+plt.legend()
+plt.title('Evaluation Metrics Over Time')
+eval_path = run_dir / f"{dataset_name}_eval_metrics.png"
+plt.savefig(eval_path, dpi=300)
+plt.close()
+
+print(f"Saved training curves to {train_path}")
+print(f"Saved evaluation curves to {eval_path}")
