@@ -245,6 +245,7 @@ def on_launch(sender, app_data):
     # Paramètres spécifiques
     if model == 'oracle':
         lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider_p'):.2f}")
+        lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
     if model in ['markov', 'accompagnement']:
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
@@ -276,6 +277,7 @@ def on_launch(sender, app_data):
     # Remplissage selon mode
     if model == 'oracle':
         cfg['p']            = float(dpg.get_value('oracle_slider_p'))
+        cfg['sim_lvl']      = int(dpg.get_value('similarity_combo'))
         cfg['contour']      = BOOL_MAP[dpg.get_value('contour_combo')]
         cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
     elif model in ['markov', 'accompagnement']:

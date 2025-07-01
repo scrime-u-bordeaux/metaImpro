@@ -45,35 +45,34 @@ class PianoGenieEngine:
         self.k_prev = torch.full((1,1), md.SOS, dtype=torch.long, device=self.device)
         self.h, self.c = self.model.dec.init_hidden(1, device=self.device)
         self.last_time = time.time()
-        
-    def generate_note_from_button(self, button_idx: int):
+
+    def generate_note_from_button(self, button_idx: int, delta_t: float):
         """
         Appelé à chaque appui de bouton (0…7).
         Renvoie (midi_pitch, onset_time).
         """
-        # 1) delta-time
-        t_now = time.time()
-        delta_t = t_now - self.last_time
+        # clamp delta
         delta_t = min(delta_t, self.cfg["data_delta_time_max"])
         
-        # 2) constituer les tenseurs
+        # tensors
         k_in = self.k_prev                  # (1,1)
-        t_in = torch.tensor([[[delta_t]]], device=self.device)
-        b_in = torch.tensor([[[button_idx]]], device=self.device)
+        t_in = torch.tensor([[delta_t]], device=self.device)
+        b_in = torch.tensor([[button_idx]], device=self.device)
         
-        # 3) forward décoder
         logits, (h_new, c_new) = self.model.dec(k_in, t_in, b_in, (self.h, self.c))
+        probs      = F.softmax(logits[0,0], dim=-1)
+        pitch_idx  = torch.multinomial(probs, 1).item()
         
-        # 4) obtenir la note
-        probs = F.softmax(logits[0,0], dim=-1)          # vecteur de taille 88
-        pitch_idx = torch.multinomial(probs, 1).item()  # ou .argmax().item()
-        
-        # 5) update état interne
+        # update state
         self.k_prev = torch.tensor([[pitch_idx]], device=self.device)
         self.h, self.c = h_new, c_new
-        self.last_time = t_now
-        
-        # 6) calcul du pitch MIDI absolu
+
+        # compute midi pitch
         midi_pitch = pitch_idx + md.PIANO_LOWEST_KEY_MIDI_PITCH
-        
-        return midi_pitch, t_now
+
+        # compute onset time relative to now (or relative to last_time if you prefer)
+        onset_time = time.time()
+        # update last_time if you want to measure deltas externally
+        self.last_time = onset_time
+
+        return midi_pitch, onset_time

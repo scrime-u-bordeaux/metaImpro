@@ -66,7 +66,11 @@ def load_corpus(input_path: str) -> List[dict]:
 def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
     
     if mode == "Autoencoder":
-        PianoGenieEngine(input_path, "piano_genie/cfg.json")
+        return {
+            'symbols': [],            
+            'model_path': input_path, 
+            'config_path': "piano_genie/cfg.json"
+        }
     
     symbols = load_corpus(input_path)
     result: Dict[str, Any] = {'symbols': symbols}
@@ -248,17 +252,12 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         if log_callback:
             choices = [(s['pitch'], p) for s, p in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
+
     elif config['mode'] == 'Autoencoder':
         btn_idx = KEYBOARD_MAPPING[event.key]
         # génère une note via le décodeur
-        midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx)
-        # joue la note tout de suite
-        synth.noteon(0, midi_pitch, config.get("default_velocity", 120))
-        # stocke pour le note_off
-        state['note_buffer'][event.key] = [midi_pitch]
-        # log
-        log(f"Autoencoder → bouton {btn_idx} → pitch {midi_pitch}")
-
+        midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
+        raw_note = [midi_pitch]
         
     # Jouer note ou accord
     pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
@@ -407,8 +406,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     elif config['mode'] == 'Autoencoder':
         btn_idx = note_index  # ou une table de mapping si nécessaire
         midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx)
-        synth.noteon(0, midi_pitch, velocity)
-        state['note_buffer'][note_index] = [midi_pitch]
+        raw_note = midi_pitch
         log(f"Autoencoder MIDI → bouton {btn_idx} → pitch {midi_pitch}")
 
 
@@ -527,12 +525,10 @@ def improvisation_loop(config, stop_event, log_callback=None):
             daemon=True
         ).start()
     elif config["mode"] == "Autoencoder":
-        # 1) créez l’engine et chargez le modèle
         engine = PianoGenieEngine(
-            model_path=config["model_path"],
-            config_path=config.get("config_path", "piano_genie/cfg.json")
+            model_path=data["model_path"],
+            config_path=data["config_path"]
         )
-        # 2) réinitialisez l’état du décodeur
         engine.reset_generation()
         state["engine"] = engine
 
