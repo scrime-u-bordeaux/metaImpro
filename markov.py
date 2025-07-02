@@ -123,29 +123,33 @@ def generate_symbol_vlmc(
     max_order: int = 3,
     gap: int = 0,
     contour: bool = True,
-    similarity_level: int = 3
+    similarity_level: int = 3,
+    n_candidates: int = 1
 ) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
     Génère le symbole suivant via VLMC avec logique de contour mélodique.
+    La première note (fallback) est tirée selon la distribution marginale observée.
 
     Args:
-        previous_symbols: symboles précédents (notes/accords) sous forme de dictionnaires contenant au moins 'pitch'.
-        vlmc_table: table VLMC (contexte -> {clé: count}).
-        all_keys: toutes les clés possibles (fallback).
-        max_order: ordre max du contexte.
-        gap: écart entre les hauteurs (positif = monter, négatif = descendre).
-        contour: active la contrainte de contour mélodique.
-        similarity_level: niveau de similarité entre les symboles (3 ou 2 ou 1)
-
-    Returns:
-        sym: nouveau symbole dict.
-        prob: probabilité associée.
-        top_probs: liste des 4 meilleures probabilités [(sym, prob), ...].
+        n_candidates: nombre de candidats à considérer pour le tirage.
+                      1 -> prend toujours le max;
+                      2 -> tirage aléatoire uniforme parmi les deux plus probables;
+                      etc.
     """
-    # 1) Préparer l’historique  
+    # 1) Préparer l’historique
     full_history = [symbol_to_key(s) for s in previous_symbols]
     trunc_history = [truncate_key(k, similarity_level) for k in full_history]
     context = tuple(trunc_history[-max_order:]) if trunc_history else ()
+
+    # Fonction interne pour tirer selon top n_candidates
+    def pick_from_probs(keys, probs):
+        # indices triés par prob décroissante
+        order_idx = np.argsort(probs)[::-1]
+        top_k = min(n_candidates, len(keys))
+        candidates_idx = order_idx[:top_k]
+        # tirage uniforme parmi ces candidats
+        chosen = np.random.choice(candidates_idx)
+        return chosen
 
     # 2) Back‑off : chercher le plus long suffixe du contexte
     for order in range(len(context), 0, -1):
@@ -158,14 +162,24 @@ def generate_symbol_vlmc(
                 print("   ", k, "→", c)
             break
     else:
-        # Fallback uniforme
-        print(f"[DEBUG‑L{similarity_level}] no match for context {context!r}, uniform fallback")
-        key = random.choice(all_keys)
-        sym = key_to_symbol(key)
-        uni_p = 1.0 / len(all_keys)
-        return sym, uni_p, [(sym, uni_p)]
+        # Fallback marginal
+        print(f"[DEBUG-L{similarity_level}] fallback marginal pour contexte {context!r}")
+        marg_counts: Dict[Tuple, float] = defaultdict(float)
+        for sub_dist in vlmc_table.values():
+            for key_, cnt in sub_dist.items():
+                marg_counts[key_] += cnt
+        keys = list(marg_counts.keys())
+        counts = np.array([marg_counts[k] for k in keys], dtype=float)
+        probs = counts / counts.sum()
+        idx = pick_from_probs(keys, probs)
+        chosen_key = keys[idx]
+        sym = key_to_symbol(chosen_key)
+        prob = float(probs[idx])
+        top_idx = np.argsort(probs)[::-1][:min(4, len(keys))]
+        top_probs = [(key_to_symbol(keys[i]), float(probs[i])) for i in top_idx]
+        return sym, prob, top_probs
 
-    # 3) Extraire symboles et comptes
+    # 3) Successeurs du contexte
     symbols_list = list(dist.keys())
     counts = np.array([dist[k] for k in symbols_list], dtype=float)
 
@@ -173,40 +187,37 @@ def generate_symbol_vlmc(
     if contour and previous_symbols:
         last_key = symbol_to_key(previous_symbols[-1])
         prev_pitch = last_key[1] if last_key[0] == "note" else last_key[1][0]
-        flat_pitches = np.array([
-            (k[1] if k[0] == "note" else k[1][0])
-            for k in symbols_list
-        ], dtype=float)
-        if gap > 0:
-            mask = flat_pitches > prev_pitch
-        elif gap < 0:
-            mask = flat_pitches < prev_pitch
-        else:
-            mask = np.ones(len(symbols_list), dtype=bool)
+        flat = np.array([(k[1] if k[0] == "note" else k[1][0]) for k in symbols_list], dtype=float)
+        mask = (flat > prev_pitch) if gap > 0 else (flat < prev_pitch) if gap < 0 else np.ones(len(symbols_list), bool)
         if mask.any():
-            symbols_list = [s for (s, m) in zip(symbols_list, mask) if m]
+            symbols_list = [s for s, m in zip(symbols_list, mask) if m]
             counts = np.array([dist[s] for s in symbols_list], dtype=float)
 
-    # 5) Si rien à choisir → fallback uniforme
+    # 5) Fallback marginal si vide
     if len(symbols_list) == 0 or counts.sum() == 0:
-        key = random.choice(all_keys)
-        sym = key_to_symbol(key)
-        uni_p = 1.0 / len(all_keys)
-        return sym, uni_p, [(sym, uni_p)]
+        print(f"[DEBUG-L{similarity_level}] fallback marginal après filtrage pour contexte {context!r}")
+        marg_counts: Dict[Tuple, float] = defaultdict(float)
+        for sub_dist in vlmc_table.values():
+            for key_, cnt in sub_dist.items():
+                marg_counts[key_] += cnt
+        keys = list(marg_counts.keys())
+        counts = np.array([marg_counts[k] for k in keys], dtype=float)
+        probs = counts / counts.sum()
+        idx = pick_from_probs(keys, probs)
+        chosen_key = keys[idx]
+        sym = key_to_symbol(chosen_key)
+        prob = float(probs[idx])
+        top_idx = np.argsort(probs)[::-1][:min(4, len(keys))]
+        top_probs = [(key_to_symbol(keys[i]), float(probs[i])) for i in top_idx]
+        return sym, prob, top_probs
 
-    # 6) Calcul des probabilités
+    # 6) Probabilités normales
     probs = counts / counts.sum()
-
-    # 7) Tirage et top‑4
-    idx = np.random.choice(len(symbols_list), p=probs)
+    idx = pick_from_probs(symbols_list, probs)
     chosen_key = symbols_list[idx]
     sym = key_to_symbol(chosen_key)
     prob = float(probs[idx])
-    top_n = min(4, len(symbols_list))
-    top_idx = np.argsort(probs)[::-1][:top_n]
-    top_probs = [
-        (key_to_symbol(symbols_list[i]), float(probs[i]))
-        for i in top_idx
-    ]
+    top_idx = np.argsort(probs)[::-1][:min(4, len(symbols_list))]
+    top_probs = [(key_to_symbol(symbols_list[i]), float(probs[i])) for i in top_idx]
 
     return sym, prob, top_probs
