@@ -200,7 +200,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         max_order          = config['markov_order'],
         gap                = gap,
         contour            = config['contour'],
-        similarity_level= config['sim_lvl']
+        similarity_level= config['sim_lvl'],
+        n_candidates = 2
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -238,7 +239,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             max_order          = config['markov_order'],
             gap                = gap,
             contour            = config['contour'],
-            similarity_level   = config['sim_lvl']
+            similarity_level   = config['sim_lvl'],
+            n_candidates = 2
         )
 
         # update that chord's own history
@@ -352,7 +354,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         max_order          = config['markov_order'],
         gap                = gap,
         contour            = config['contour'],
-        similarity_level= config['sim_lvl']
+        similarity_level= config['sim_lvl'],
+        n_candidates = 2
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -388,7 +391,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             max_order          = config['markov_order'],
             gap                = gap,
             contour            = config['contour'],
-            similarity_level   = config['sim_lvl']
+            similarity_level   = config['sim_lvl'],
+            n_candidates = 2
         )
 
         # update only this chord’s history
@@ -519,7 +523,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
             args=(synth, state['accomp_stop']),
             kwargs={
                 "bpm": 120,
-                "velocity": 50,
+                "velocity": 110,
                 "log_callback": log_callback
             },
             daemon=True
