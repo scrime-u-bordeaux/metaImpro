@@ -305,7 +305,7 @@ def on_exit():
 
 dpg.create_context()
 
-with dpg.window(label='Sélection du device', width=1200, height=1200):
+with dpg.window(label='Sélection du device', width=1300, height=1300):
     dpg.add_text("Choisissez un device")
     with dpg.group(horizontal=True):
 
@@ -422,7 +422,7 @@ with dpg.window(label='Sélection du device', width=1200, height=1200):
     
 
 # Création fenêtre
-dpg.create_viewport(title='MetaImpro', width=1200, height=850)
+dpg.create_viewport(title='MetaImpro', width=1200, height=950)
 dpg.setup_dearpygui()
 dpg.set_exit_callback(on_exit)
 dpg.show_viewport()
