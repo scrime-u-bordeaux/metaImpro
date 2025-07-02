@@ -11,7 +11,7 @@ import json
 from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
-from accompaniment import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
+from accompaniement import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
 from impro_genie import PianoGenieEngine
 
 log = print # type:ignore
