@@ -50,7 +50,7 @@ def chord_loop(synth,
         [65, 68, 71]    # C#7 (F, G#, B)
     ]
     chord_names = ["C7", "C#7"]
-    beat_dur = 120.0 / bpm
+    beat_dur = 60.0 / bpm
     # stride pattern: bass, chord, fifth, chord
     pattern = ["bass", "chord", "fifth", "chord"]
     idx = 0
