@@ -182,56 +182,53 @@ def save_prob_history(prob_history, title: str, mode):
     return path
       
 def on_model_change(sender, app_data, user_data):
-
-    slider_tag, markov_tag, progress_tag, lvl_tag, contour_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag = user_data
     if app_data == 'Autoencoder':
-        # replace corpus list with .pt checkpoints
         pt_items = get_pt_files("piano_genie")
-        dpg.configure_item('corpus_combo',
-                           items=pt_items,
-                           default_value=pt_items[0] if pt_items else None,
-                           label='Choisissez les poids')
-        # hide irrelevant controls
+        dpg.configure_item('corpus_combo', items=pt_items, default_value=pt_items[0] if pt_items else None, label='Choisissez les poids')
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
         dpg.hide_item(progress_tag)
         dpg.hide_item(lvl_tag)
-        dpg.hide_item(contour_tag)
+        dpg.hide_item(n_cand_tag)
+        dpg.hide_item(bpm_tag)
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
     else:
-        # restore MIDI/json listing
         corpus_items = get_corpus()
-        dpg.configure_item('corpus_combo',
-                           items=corpus_items,
-                           default_value=corpus_items[0] if corpus_items else None,
-                           label="Choisissez un morceau")
-    # fonctionnement normal
+        dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
+
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
         dpg.show_item(progress_tag)
         dpg.show_item(lvl_tag)
-        dpg.show_item(contour_tag)
         dpg.hide_item(markov_tag)
         dpg.show_item("oracle_text")
         dpg.hide_item("markov_plot")
         dpg.hide_item("markov_text")
+        dpg.hide_item(n_cand_tag)
+        dpg.hide_item(bpm_tag)
     elif app_data in ['markov', 'accompagnement']:
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
         dpg.show_item(lvl_tag)
-        dpg.show_item(contour_tag)
+        dpg.show_item(n_cand_tag)
         dpg.show_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.show_item("markov_text")
+        if app_data =="accompagnement":
+            dpg.show_item(bpm_tag)
+        else:
+            dpg.hide_item(bpm_tag)
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
         dpg.hide_item(progress_tag)
         dpg.hide_item(lvl_tag)
-        dpg.hide_item(contour_tag)
+        dpg.hide_item(n_cand_tag)
+        dpg.hide_item(bpm_tag)
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
@@ -242,62 +239,54 @@ def on_launch(sender, app_data):
     model = dpg.get_value('model_combo')
     lignes.append(f"Modèle : {model}")
 
-    # Paramètres spécifiques
     if model == 'oracle':
         lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider_p'):.2f}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
     if model in ['markov', 'accompagnement']:
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
+        lignes.append(f"Nombre de candidats : {dpg.get_value('n_candidat')}")
+
     if model == 'Autoencoder':
         lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
-    # Toujours afficher device
     lignes.append(f"Device MIDI : {dpg.get_value('device_combo')}")
-
-    # Récapitulatif
     dpg.set_value('summary_text', ", ".join(lignes))
 
-    # Construction du config dict
-    # On récupère la valeur de corpus_combo, qui sera soit un .mid/.json, soit un .pt selon on_model_change
-    chosen = dpg.get_value('corpus_combo')
-    # Common fields (toujours présents)
     cfg = {
         'mode': model,
         'device': dpg.get_value('device_combo'),
         'sf2_path': 'Roland_SC-88.sf2',
-        # champs partagés (même si None)
         'p': None,
         'markov_order': None,
         'sim_lvl': None,
-        'contour': None,
+        'n_candidat': None,
         'corpus': None,
+        'bpm' : None,
     }
 
-    # Remplissage selon mode
+    chosen = dpg.get_value('corpus_combo')
     if model == 'oracle':
-        cfg['p']            = float(dpg.get_value('oracle_slider_p'))
-        cfg['sim_lvl']      = int(dpg.get_value('similarity_combo'))
-        cfg['contour']      = BOOL_MAP[dpg.get_value('contour_combo')]
-        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
+        cfg['p'] = float(dpg.get_value('oracle_slider_p'))
+        cfg['sim_lvl'] = int(dpg.get_value('similarity_combo'))
+        cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
     elif model in ['markov', 'accompagnement']:
         cfg['markov_order'] = int(dpg.get_value('markov_combo'))
-        cfg['sim_lvl']      = int(dpg.get_value('similarity_combo'))
-        cfg['contour']      = BOOL_MAP[dpg.get_value('contour_combo')]
-        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
-    elif model == 'random':
-        cfg['corpus']       = os.path.join(CORPUS_FOLDER, chosen)
-    elif model == 'Autoencoder':
-        # On met le chemin du .pt dans corpus pour que load_symbols / improvisation_loop ne plante pas
-        cfg['corpus'] = os.path.join('piano_genie', chosen)
-        # pas de p, pas de markov, pas de contour, sim_lvl etc.
-    else:
-        # fallback (ne devrait pas arriver)
+        cfg['sim_lvl'] = int(dpg.get_value('similarity_combo'))
+        cfg['n_candidat'] = int(dpg.get_value('n_candidat'))
         cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
+        if model == 'accompagnement':
+            bpm = int(dpg.get_value('bpm_input'))
+            cfg['bpm'] = bpm
+            lignes.append(f"BPM : {bpm}")
+    elif model == 'random':
+        cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
+    else:  # Autoencoder
+        cfg['corpus'] = os.path.join('piano_genie', chosen)
 
-    # Sauvegarde et lancement
     save_prob_history(prob_history, chosen, model)
     run_impro(cfg, append_log_entry)
+
 def on_exit():
     mode = dpg.get_value('model_combo')
     save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
@@ -336,7 +325,7 @@ with dpg.window(label='Sélection du device', width=1300, height=1300):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'contour_combo')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
@@ -365,17 +354,24 @@ with dpg.window(label='Sélection du device', width=1300, height=1300):
             items=['1', '2', '3'],
             width=200
         )
-        dpg.add_combo(
-            tag="contour_combo",
-            label="Contour",
-            default_value='True',
-            items=['True', 'False'],
-            width=200
+        dpg.add_combo(tag='n_candidat',
+                    label='Nombre de candidats',
+                    items= ['1', '2', '3', '4', '5'],
+                    default_value='5',
+                    width=200
         )
         
-
+        dpg.add_input_int(
+            tag="bpm_input",
+            label="bpm",
+            default_value=120,
+            min_value=1,
+            width=200,
+        )
         # On cache les sliders au démarrage
         dpg.hide_item('markov_combo')
+        dpg.hide_item('n_candidat')
+        dpg.hide_item('bpm_input')
 
     dpg.add_spacer(height=20)
 
@@ -422,7 +418,7 @@ with dpg.window(label='Sélection du device', width=1300, height=1300):
     
 
 # Création fenêtre
-dpg.create_viewport(title='MetaImpro', width=1200, height=950)
+dpg.create_viewport(title='MetaImpro', width=1200, height=900)
 dpg.setup_dearpygui()
 dpg.set_exit_callback(on_exit)
 dpg.show_viewport()

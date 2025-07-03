@@ -185,7 +185,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             dur_eff,
             gap,
             p=config['p'],
-            contour=config['contour']
+            contour=True
         )
         state['prev_state'] = new_state
         if log_callback:
@@ -199,9 +199,9 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
-        contour            = config['contour'],
+        contour            = True,
         similarity_level= config['sim_lvl'],
-        n_candidates = 2
+        n_candidates = config['n_candidat']
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -238,9 +238,9 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             all_keys           = all_keys,
             max_order          = config['markov_order'],
             gap                = gap,
-            contour            = config['contour'],
+            contour            = True,
             similarity_level   = config['sim_lvl'],
-            n_candidates = 2
+            n_candidates = config['n_candidat']
         )
 
         # update that chord's own history
@@ -339,7 +339,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             dur_eff,
             gap,
             p=config['p'],
-            contour=config['contour']
+            contour=True
         )
         state['prev_state'] = new_state
         if log_callback:
@@ -353,9 +353,9 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
-        contour            = config['contour'],
+        contour            = True,
         similarity_level= config['sim_lvl'],
-        n_candidates = 2
+        n_candidates = config['n_candidat']
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -390,9 +390,9 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             all_keys           = all_keys,
             max_order          = config['markov_order'],
             gap                = gap,
-            contour            = config['contour'],
+            contour            = True,
             similarity_level   = config['sim_lvl'],
-            n_candidates = 2
+            n_candidates = config['n_candidat']
         )
 
         # update only this chord’s history
@@ -512,7 +512,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         # timing to figure out which bar we’re in
         state['accomp_start'] = time()
-        beat = 60.0 / 120
+        beat = 60.0 / config['bpm']
         state['bar_dur'] = 4 * beat
         state['accomp_stop'] = threading.Event()
         global _accomp_stop
@@ -522,7 +522,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
             target=chord_loop,
             args=(synth, state['accomp_stop']),
             kwargs={
-                "bpm": 120,
+                "bpm": config['bpm'],
                 "velocity": 110,
                 "log_callback": log_callback
             },
