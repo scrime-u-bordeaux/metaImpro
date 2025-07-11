@@ -10,7 +10,7 @@ import soundfile as sf
 import numpy as np
 from scipy.signal import butter, filtfilt
 import tempfile
-import re
+import time
 
 def preprocess_audio(y, sr):
     """Preprocess audio to improve chord detection"""
@@ -22,7 +22,7 @@ def preprocess_audio(y, sr):
     y_filtered = filtfilt(b, a, y)
     
     # 2. Gentle compression to even out dynamics
-    y_compressed = np.sign(y_filtered) * np.power(np.abs(y_filtered), 0.7)
+    y_compressed = np.sign(y_filtered) * np.power(np.abs(y_filtered), 0.6)
     
     # 3. Normalize
     y_normalized = y_compressed / np.max(np.abs(y_compressed))
@@ -53,6 +53,7 @@ def post_process_chords(labels, min_duration=0.5):
     return filtered_labels
 
 def get_chord_progression(wav_file):
+    a = time.time()
     # Load and preprocess audio
     y, sr = librosa.load(wav_file, sr=None)
 
@@ -68,61 +69,23 @@ def get_chord_progression(wav_file):
         temp_path = tmp.name
     sf.write(temp_path, y_processed, sr)
 
-        # First try with adaptive tuning - MUCH more sensitive parameters
-    chordino_adaptive = Chordino(
-        use_nnls=True,
-        roll_on=1,  # Reduced from 5 - less temporal smoothing
-        spectral_whitening=0.3,  # Reduced from 0.9 - keep more harmonics
-        spectral_shape=0.9,  # Increased from 0.5 - less aggressive shaping
-        boost_n_likelihood=0.5,  # Reduced from 1.5 - much less conservative
-        tuning_mode=TuningMode.LOCAL
-    )
-
-    # Then try with global tuning - same sensitive parameters
-    chordino_global = Chordino(
-        use_nnls=True,
-        roll_on=1,
-        spectral_whitening=0.3,
-        spectral_shape=0.9,
-        boost_n_likelihood=0.5,
-        tuning_mode=TuningMode.GLOBAL
-    )
-
-    # Also try default parameters for comparison
     chordino_default = Chordino()
 
-    labels_adaptive = chordino_adaptive.extract(temp_path)
-    labels_global = chordino_global.extract(temp_path)
-    labels_default = chordino_default.extract(temp_path)
+    labels= chordino_default.extract(temp_path)
 
     try:
         os.remove(temp_path)
     except OSError:
         pass
-
-    # Count non-N chords for each
-    non_n_adaptive = sum(1 for label in labels_adaptive if label.chord != 'N')
-    non_n_global = sum(1 for label in labels_global if label.chord != 'N')
-    non_n_default = sum(1 for label in labels_default if label.chord != 'N')
-
-    # Choose the result with most actual chord detections
-    if non_n_adaptive >= non_n_global and non_n_adaptive >= non_n_default:
-        labels = labels_adaptive
-        print("Using adaptive tuning results")
-    elif non_n_global >= non_n_default:
-        labels = labels_global
-        print("Using global tuning results")
-    else:
-        labels = labels_default
-        print("Using default parameters results")
-
     # Post-process to remove very short chord detections
-    labels_filtered = post_process_chords(labels, min_duration=0.3)
+    labels_filtered = post_process_chords(labels, min_duration=1)
     chord_list = [
     (ch.chord, ch.timestamp)
     for ch in labels_filtered
     if ch.chord != 'N'
     ]
+    b = time.time()
+    print("time = ",b-a)
     return chord_list
 
 
