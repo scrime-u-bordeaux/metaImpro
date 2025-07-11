@@ -364,7 +364,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
         dpg.add_input_int(
             tag="bpm_input",
             label="bpm",
-            default_value=120,
+            default_value=100,
             min_value=1,
             width=200,
         )

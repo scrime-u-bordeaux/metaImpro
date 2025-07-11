@@ -8,27 +8,27 @@ def symbol_to_key(symbol: Any) -> Tuple:
     Transforme un symbole (note ou accord) ou un pitch simple en tuple hashable.
     Accepte:
       - dict comme avant
-      - int    -> note avec durée=1.0, velocity=64
-      - list/tuple d'int -> accord avec durée=1.0, velocity=64
+      - int    -> note avec durée=1.0, velocity=100
+      - list/tuple d'int -> accord avec durée=1.0, velocity=100
     """
     # Simple note pitch
     if isinstance(symbol, int):
-        return ("note", symbol, 1.0, 64)
+        return ("note", symbol, 1.0, 100)
 
     # Simple chord as list/tuple of pitches
     if isinstance(symbol, (list, tuple)) and all(isinstance(p, int) for p in symbol):
-        return ("chord", tuple(sorted(symbol)), 1.0, 64)
+        return ("chord", tuple(sorted(symbol)), 1.0, 100)
 
     # Existing dict handling
     if isinstance(symbol, dict):
         if symbol.get("type") == "note":
-            return ("note", symbol["pitch"], symbol.get("duration", 1.0), symbol.get("velocity", 64))
+            return ("note", symbol["pitch"], symbol.get("duration", 1.0), symbol.get("velocity", 100))
         elif symbol.get("type") == "chord":
             return (
                 "chord",
                 tuple(sorted(symbol["pitch"])),
                 symbol.get("duration", 1.0),
-                symbol.get("velocity", 64),
+                symbol.get("velocity", 100),
             )
     
     raise ValueError(f"Type de symbole inconnu ou non supporté: {symbol!r}")
@@ -49,10 +49,10 @@ def key_to_symbol(key: Tuple) -> Dict[str, Any]:
             _, pitch, duration, velocity = key
         elif len(key) == 3:
             _, pitch, duration = key
-            velocity = 64
+            velocity = 100
         elif len(key) == 2:
             _, pitch = key
-            duration, velocity = 1.0, 64
+            duration, velocity = 1.0, 100
         else:
             raise ValueError(f"Clé 'note' invalide : {key}")
         return {"type": "note", "pitch": pitch, "duration": duration, "velocity": velocity}
@@ -62,10 +62,10 @@ def key_to_symbol(key: Tuple) -> Dict[str, Any]:
             _, pitches, duration, velocity = key
         elif len(key) == 3:
             _, pitches, duration = key
-            velocity = 64
+            velocity = 100
         elif len(key) == 2:
             _, pitches = key
-            duration, velocity = 1.0, 64
+            duration, velocity = 1.0, 100
         else:
             raise ValueError(f"Clé 'chord' invalide : {key}")
         return {"type": "chord", "pitch": list(pitches), "duration": duration, "velocity": velocity}

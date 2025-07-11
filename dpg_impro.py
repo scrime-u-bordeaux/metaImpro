@@ -11,7 +11,7 @@ import json
 from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
-from accompaniement import chord_loop, make_vlmc_for_chord, get_pitches_by_chord
+from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord
 from impro_genie import PianoGenieEngine
 
 log = print # type:ignore
@@ -20,6 +20,10 @@ KEYBOARD_MAPPING = {
     pygame.K_a: 0, pygame.K_z: 1, pygame.K_e: 2, pygame.K_r: 3, 
     pygame.K_t: 4, pygame.K_y: 5, pygame.K_u: 6, pygame.K_i: 7,
 }
+
+PROGRESSION = ["C7", "C7", "C7", "C7", "F7", "F7", "C7", "C7", "G7", "F7", "C7", "G7"]
+riff = [0, 2, 0, 2, 0, 4, 0, 4]
+xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
 
 # Variables globales pour gérer le thread d'impro
 _impro_thread = None
@@ -63,7 +67,8 @@ def load_corpus(input_path: str) -> List[dict]:
         raise ValueError(f"Extension de corpus non supportée : {ext}")
     return symbols
 
-def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int) -> Dict[str, Any]:
+def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int,  xml_folder: str,
+        progression: List[str]) -> Dict[str, Any]:
     
     if mode == "Autoencoder":
         return {
@@ -101,17 +106,17 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
             elif s['type'] == 'chord':
                 result['unique_pitches'].append(tuple(s['pitch']))
     if mode == "accompagnement":
-        c7_corpus, csharp7_corpus = get_pitches_by_chord()
-        result['c7_corpus']     = c7_corpus
-        result['csharp7_corpus'] = csharp7_corpus
+        chord_map = get_pitches_by_chord(xml_folder, progression)
+        result['chord_map'] = chord_map
         
         # build separate VLMC tables per chord
-        vlmcs = make_vlmc_for_chord(
-            {'C7': c7_corpus, 'C#7': csharp7_corpus},
+        result['vlmcs'] = make_vlmc_for_chord(
+            chord_map,
             max_order=markov_order,
             similarity_level=similarity_level
         )
-        result['vlmcs'] = vlmcs   
+        result['progression'] = progression
+ 
     return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
@@ -226,8 +231,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         # figure out how many bars have elapsed
         elapsed = time() - last_times.get('accomp_start', state['accomp_start'])
         bar_index = int(elapsed / state['bar_dur'])
-        chord_name = "C7" if (bar_index % 2) == 0 else "C#7"
-
+        chord_name = PROGRESSION[bar_index % len(PROGRESSION)]
+        print(f"[DEBUG]-{chord_name}")
         # grab that chord's VLMC table + all_keys
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
@@ -375,15 +380,15 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         raw_note = rnd if isinstance(rnd, list) else [rnd]
 
     elif config["mode"] == "accompagnement":
-        # how many bars have passed since we started
-        elapsed  = time() - state['accomp_start']
+        # figure out how many bars have elapsed
+        elapsed = time() - last_times.get('accomp_start', state['accomp_start'])
         bar_index = int(elapsed / state['bar_dur'])
-        chord_name = "C7" if (bar_index % 2) == 0 else "C#7"
-
-        # lookup that chord’s VLMC table + keys
+        chord_name = PROGRESSION[bar_index % len(PROGRESSION)]
+        print(f"[DEBUG]-{chord_name}")
+        # grab that chord's VLMC table + all_keys
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
-        # generate a symbol from *that* model
+        # generate one symbol (note) from *that* table
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
@@ -395,16 +400,16 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             n_candidates = config['n_candidat']
         )
 
-        # update only this chord’s history
-        h = state['accomp_history'][chord_name]
-        h.append(sym)
-        if len(h) > config['markov_order'] + 1:
-            h.pop(0)
+        # update that chord's own history
+        state['accomp_history'][chord_name].append(sym)
+        # (optional: keep it bounded by markov_order)
+        if len(state['accomp_history'][chord_name]) > config['markov_order'] + 1:
+            state['accomp_history'][chord_name].pop(0)
 
         raw_note = sym
 
         if log_callback:
-            choices = [(s['pitch'], prob) for s, prob in top_probs]
+            choices = [(s['pitch'], p) for s, p in top_probs]
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
 
     elif config['mode'] == 'Autoencoder':
@@ -474,7 +479,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
     data = load_symbols(
         config['corpus'], config['mode'],
-        config.get('markov_order', 1), config.get('sim_lvl', 1)
+        config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION
     )
 
     symbols = data['symbols']
@@ -489,7 +494,8 @@ def improvisation_loop(config, stop_event, log_callback=None):
     }
 
     synth = init_audio(config['sf2_path'])
-
+    random_preset = [0, 11, 12, 16, 18]
+    synth_accomp = init_audio(config['sf2_path'], preset=random.choice(random_preset))
 
     # Attach mode-specific data
     if config['mode'] == 'oracle':
@@ -500,34 +506,40 @@ def improvisation_loop(config, stop_event, log_callback=None):
         state['notes'] = data['notes']
 
     elif config['mode'] == 'accompagnement':
-        # instead of blocking chord_loop, prepare VLMC tables once:
-        state['vlmcs'] = make_vlmc_for_chord({
-            "C7":  data['c7_corpus'],
-            "C#7": data['csharp7_corpus'],}, 
-            max_order=config['markov_order'],
-        similarity_level=config['sim_lvl'])
+        # On récupère directement le chord_map et les VLMCs générés par load_symbols
+        state['chord_map'] = data['chord_map']      # { accord: [hauteurs MIDI] }
+        state['vlmcs']     = data['vlmcs']          # { accord: (vlmc_table, all_keys) }
+        state['progression'] = data['progression']
 
-        # per‑chord histories for context
-        state['accomp_history'] = {"C7": [], "C#7": []}
-
-        # timing to figure out which bar we’re in
+        # Historiques par accord pour alimenter la génération si besoin
+        state['accomp_history'] = {ch: [] for ch in state['chord_map']}
         state['accomp_start'] = time()
         beat = 60.0 / config['bpm']
-        state['bar_dur'] = 4 * beat
+        state['bar_dur']      = 4 * beat
+
         state['accomp_stop'] = threading.Event()
         global _accomp_stop
         _accomp_stop = state['accomp_stop']
 
+        # On démarre le chord_loop en arrière‑plan,
+        # en lui passant progression & chord_map
         threading.Thread(
             target=chord_loop,
-            args=(synth, state['accomp_stop']),
+            args=(
+                synth_accomp,
+                state['accomp_stop'],
+                state['progression'],
+                
+            ),
             kwargs={
                 "bpm": config['bpm'],
-                "velocity": 110,
-                "log_callback": log_callback
+                "velocity": 60,
+                "log_callback": log_callback,
+                #"riff_pattern": riff
             },
             daemon=True
         ).start()
+
     elif config["mode"] == "Autoencoder":
         engine = PianoGenieEngine(
             model_path=data["model_path"],
