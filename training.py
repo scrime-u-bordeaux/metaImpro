@@ -132,7 +132,7 @@ def performances_to_batch(performances, device, train=True):
         t = np.concatenate([[1e8], t])
         t = np.clip(t, 0, CFG["data_delta_time_max"])
         batch_t.append(t)
-
+        print(torch.tensor(batch_k))
     return (torch.tensor(batch_k).long(), torch.tensor(batch_t).float())
 
 step = 0

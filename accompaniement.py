@@ -3,17 +3,12 @@ from typing import List, Dict, Optional, Set
 from time import sleep
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key, truncate_key
 import os
-from chord_extractor.extractors import Chordino
-from chord_extractor.extractors import TuningMode 
-import librosa
-import soundfile as sf
-import numpy as np
-from scipy.signal import butter, filtfilt
-import tempfile
-import time
+import re
 
+
+"""
 def preprocess_audio(y, sr):
-    """Preprocess audio to improve chord detection"""
+    #Preprocess audio to improve chord detection#
     
     # 1. Apply high-pass filter to remove low-frequency noise/drums
     nyquist = sr / 2
@@ -30,7 +25,7 @@ def preprocess_audio(y, sr):
     return y_normalized
 
 def post_process_chords(labels, min_duration=0.5):
-    """Clean up chord sequence by removing very short chords"""
+    #Clean up chord sequence by removing very short chords#
     if not labels:
         return labels
     
@@ -87,45 +82,138 @@ def get_chord_progression(wav_file):
     b = time.time()
     print("time = ",b-a)
     return chord_list
+    
+"""
+
+def split_chord_figure(chord):
+
+    CHORD_ROOT_RE = re.compile(r'^([A-Ga-g][#b]?)(.*)$')
+    figure = chord.split('/')[0].strip()
+    m = CHORD_ROOT_RE.match(figure)
+    root = m.group(1)
+    type = m.group(2).strip()
+    return root, type
 
 
 def get_pitches_by_chord(
-        folder: str,
-        chords):
+    folder: str,
+    chords,
+    group_by_type=False,
+    max_notes_per_chord=None):
     """
     Prends une grille, créé un dictionnaire avec l'accord et les notes
-
     Args:
         folder: le chemin du dossier dans lequel sont contenues les fichiers musicxml
         chords: la grille
+        group_by_type: if True, group by chord type instead of full chord name
+        max_notes_per_chord: maximum number of notes to collect per chord (None for no limit)
     Returns:
         chord_map: un dictionnaire contenant les accords uniques avec la liste de notes
     """
-    if chords and isinstance(chords[0],tuple):
+    if chords and isinstance(chords[0], tuple):
         chords = [C[0] for C in chords]
     
-    chord_map: Dict[str, List[int]] = {chord: [] for chord in set(chords)}
-
+    # Build keys depending on mode
+    if group_by_type:
+        # collect types present in the progression
+        types = set()
+        for ch in (chords or []):
+            try:
+                root, chord_type = split_chord_figure(ch)  # Fixed: proper unpacking
+                types.add(chord_type)  # Add the chord type to the set
+            except Exception:
+                continue
+        # remove empty type keys if you prefer, but keep them for completeness
+        chord_map: Dict[str, List[int]] = {t: [] for t in types}
+    else:
+        chord_map: Dict[str, List[int]] = {chord: [] for chord in set(chords or [])}
+    
+    target_C = pitch.Pitch('C')  # target for normalization
+    
     # 1) Load the XML and extract pitch lists
     for filename in os.listdir(folder):
         if not filename.lower().endswith(('.xml')):
             continue
         path = os.path.join(folder, filename)
         score = converter.parse(path)
-
+        
         # Pour chaque note (ou rest) dans la partition…
         for element in score.recurse().notesAndRests:
             # Ne traiter que les vraies notes
             if not isinstance(element, note.Note):
                 continue
-
+            
             # Récupère son ChordSymbol de contexte (s'il y en a un)
             cs = element.getContextByClass(harmony.ChordSymbol)
+            
+            if not cs:  # Skip if no chord symbol
+                continue
+                
             # Si c'est un accord qu'on suit, on stocke la hauteur MIDI
-            if cs and cs.figure in chord_map:
-                chord_map[cs.figure].append(element.pitch.midi)
-
+            cs_root, cs_type = split_chord_figure(cs.figure)  # Fixed: consistent naming
+            
+            if group_by_type:
+                if cs_type in chord_map:
+                    # Skip if we've already collected enough notes for this chord type
+                    if max_notes_per_chord and len(chord_map[cs_type]) >= max_notes_per_chord:
+                        continue
+                        
+                    # compute transposition in semitones so that cs_root -> C
+                    root_pitch = pitch.Pitch(cs_root)
+                    # Use pitchClass difference (works across octaves)
+                    transposition_semitones = (target_C.midi % 12) - (root_pitch.midi % 12)
+                    normalized_midi = element.pitch.midi + transposition_semitones
+                    chord_map[cs_type].append(int(normalized_midi))
+            else:
+                if cs.figure in chord_map:
+                    # Skip if we've already collected enough notes for this chord
+                    if max_notes_per_chord and len(chord_map[cs.figure]) >= max_notes_per_chord:
+                        continue
+                        
+                    chord_map[cs.figure].append(element.pitch.midi)
+    
     return chord_map
+
+def note_to_semitone(note):
+    """Convertit une note (C, D, E, etc.) en nombre de demi-tons depuis C"""
+    note_map = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+    return note_map.get(note, 0)
+
+def transpose_chord_data(chord_data, progression):
+    """
+    Transpose les données d'accords selon la progression donnée
+    
+    Args:
+        chord_data: dictionnaire avec les types d'accords et leurs notes MIDI
+        progression: liste d'accords de la progression
+    
+    Returns:
+        dictionnaire avec les accords transposés
+    """
+    result = {}
+    
+    # Obtenir tous les accords uniques de la progression
+    unique_chords = list(set(progression))
+    
+    for chord in unique_chords:
+        # Extraire la note fondamentale et le type d'accord
+        root_note = chord[0]  # Première lettre (C, F, G, etc.)
+        chord_type = chord[1:]  # Le reste (7, maj7, 6, etc.)
+        
+        # Calculer l'intervalle de transposition
+        semitones = note_to_semitone(root_note)
+        
+        # Si le type d'accord existe dans les données de base
+        if chord_type in chord_data:
+            # Transposer toutes les notes
+            transposed_notes = [note + semitones for note in chord_data[chord_type]]
+            result[chord] = transposed_notes
+        else:
+            # Si le type d'accord n'existe pas, créer une liste vide
+            result[chord] = []
+    
+    return result
+
 
 def chord_loop(synth,
                stop_event,
@@ -209,7 +297,6 @@ def chord_loop(synth,
                     synth.noteoff(0, note)
 
         bar_index += 1
-
 
 
 def make_vlmc_for_chord(symbol_sequences, max_order=3, similarity_level=1):

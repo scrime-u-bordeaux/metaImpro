@@ -182,7 +182,7 @@ def save_prob_history(prob_history, title: str, mode):
     return path
       
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag = user_data
     if app_data == 'Autoencoder':
         pt_items = get_pt_files("piano_genie")
         dpg.configure_item('corpus_combo', items=pt_items, default_value=pt_items[0] if pt_items else None, label='Choisissez les poids')
@@ -195,6 +195,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
+        dpg.hide_item(accomp_mod_tag)
     else:
         corpus_items = get_corpus()
         dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
@@ -209,7 +210,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("markov_text")
         dpg.hide_item(n_cand_tag)
         dpg.hide_item(bpm_tag)
-    elif app_data in ['markov', 'accompagnement']:
+        dpg.hide_item(accomp_mod_tag)
+    elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
         dpg.hide_item(progress_tag)
@@ -218,10 +220,19 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.show_item("markov_text")
-        if app_data =="accompagnement":
-            dpg.show_item(bpm_tag)
-        else:
-            dpg.hide_item(bpm_tag)
+        dpg.hide_item(bpm_tag)
+        dpg.hide_item(accomp_mod_tag)
+    elif app_data == 'accompagnement':
+        dpg.hide_item(slider_tag)
+        dpg.hide_item(markov_tag)
+        dpg.hide_item(progress_tag)
+        dpg.hide_item(lvl_tag)
+        dpg.show_item(n_cand_tag)
+        dpg.show_item("markov_plot")
+        dpg.hide_item("oracle_text")
+        dpg.show_item("markov_text")
+        dpg.show_item(bpm_tag)
+        dpg.show_item(accomp_mod_tag)
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
@@ -232,6 +243,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("markov_plot")
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
+        dpg.hide_item(accomp_mod_tag)
 
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
@@ -242,11 +254,15 @@ def on_launch(sender, app_data):
     if model == 'oracle':
         lignes.append(f"Probabilité p : {dpg.get_value('oracle_slider_p'):.2f}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
-    if model in ['markov', 'accompagnement']:
+    if model == 'markov':
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
         lignes.append(f"Nombre de candidats : {dpg.get_value('n_candidat')}")
-
+    if model == 'accompagnement':
+        lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
+        lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
+        lignes.append(f"Nombre de candidats : {dpg.get_value('n_candidat')}")
+        accomp_mod = dpg.get_value('accomp_mode_combo')
     if model == 'Autoencoder':
         lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
@@ -263,6 +279,7 @@ def on_launch(sender, app_data):
         'n_candidat': None,
         'corpus': None,
         'bpm' : None,
+        'accomp_mod_tag' :None
     }
 
     chosen = dpg.get_value('corpus_combo')
@@ -279,6 +296,7 @@ def on_launch(sender, app_data):
             bpm = int(dpg.get_value('bpm_input'))
             cfg['bpm'] = bpm
             lignes.append(f"BPM : {bpm}")
+            cfg['accomp_mod_tag'] = accomp_mod
     elif model == 'random':
         cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
     else:  # Autoencoder
@@ -325,7 +343,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input', 'accomp_mode_combo')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
@@ -367,6 +385,14 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             default_value=100,
             min_value=1,
             width=200,
+        )
+        dpg.add_combo(
+            tag='accomp_mode_combo',
+            label='Accompagnement mode',
+            items=['normal', 'by chord type', 'by interval'],
+            default_value='normal',
+            width=200,
+            show=False
         )
         # On cache les sliders au démarrage
         dpg.hide_item('markov_combo')

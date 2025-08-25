@@ -10,8 +10,8 @@ import os
 import json
 from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
-from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
-from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord
+from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key, build_interval_dict
+from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord, transpose_chord_data
 from impro_genie import PianoGenieEngine
 
 log = print # type:ignore
@@ -68,7 +68,7 @@ def load_corpus(input_path: str) -> List[dict]:
     return symbols
 
 def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int,  xml_folder: str,
-        progression: List[str]) -> Dict[str, Any]:
+        progression: List[str], accomp_info) -> Dict[str, Any]:
     
     if mode == "Autoencoder":
         return {
@@ -106,17 +106,46 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
             elif s['type'] == 'chord':
                 result['unique_pitches'].append(tuple(s['pitch']))
     if mode == "accompagnement":
-        chord_map = get_pitches_by_chord(xml_folder, progression)
-        result['chord_map'] = chord_map
+        if accomp_info == "normal":
+            chord_map = get_pitches_by_chord(xml_folder, progression)
+            result['chord_map'] = chord_map
+            
+            # Build VLMC tables normales (sans intervalles)
+            result['vlmcs'] = make_vlmc_for_chord(
+                chord_map,
+                max_order=markov_order,
+                similarity_level=similarity_level,
+                use_intervals=False  # Explicitement False
+            )
+            
+        elif accomp_info == "by chord type":
+            chord_map = get_pitches_by_chord(xml_folder, progression, group_by_type=True, max_notes_per_chord=600)
+            chord_map = transpose_chord_data(chord_map, PROGRESSION)
+            result['chord_map'] = chord_map
+            
+            # Build VLMC tables normales (sans intervalles)  
+            result['vlmcs'] = make_vlmc_for_chord(
+                chord_map,
+                max_order=markov_order,
+                similarity_level=similarity_level,
+                use_intervals=False  # Explicitement False
+            )
+            
+        elif accomp_info == "by interval":
+            """chord_map = get_pitches_by_chord(xml_folder, progression, group_by_type=True, max_notes_per_chord=600)
+            inter_dict = build_interval_dict(chord_map)
+            result['chord_map'] = inter_dict
+            
+            # Build VLMC tables basées sur les intervalles
+            result['vlmcs'] = make_vlmc_for_chord(
+                chord_map,  # Attention : utilisez chord_map, pas inter_dict !
+                max_order=markov_order,
+                similarity_level=similarity_level,
+                use_intervals=True  # Intervalles activés
+            )"""
+            pass
         
-        # build separate VLMC tables per chord
-        result['vlmcs'] = make_vlmc_for_chord(
-            chord_map,
-            max_order=markov_order,
-            similarity_level=similarity_level
-        )
-        result['progression'] = progression
- 
+    result['progression'] = progression
     return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
@@ -479,7 +508,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
     data = load_symbols(
         config['corpus'], config['mode'],
-        config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION
+        config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION, config.get("accomp_mod_tag")
     )
 
     symbols = data['symbols']

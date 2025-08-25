@@ -115,6 +115,13 @@ def build_vlmc_table(
 
     return table
 
+def build_interval_dict(chord_map):
+    interval_dict = {}
+    for chord, pitches in chord_map.items():
+        pitches = list(pitches)
+        intervals = [pitches[i + 1] - pitches[i] for i in range(len(pitches) - 1)]
+        interval_dict[chord] = intervals
+    return interval_dict
 
 def generate_symbol_vlmc(
     previous_symbols: List[Any],
@@ -156,6 +163,7 @@ def generate_symbol_vlmc(
         sub = context[-order:]
         if sub in vlmc_table:
             dist = vlmc_table[sub]
+            print(dist)
             # DEBUG
             print(f"[DEBUG] Context {sub!r} has {len(dist)} successors:")
             for k, c in dist.items():
@@ -221,3 +229,4 @@ def generate_symbol_vlmc(
     top_probs = [(key_to_symbol(symbols_list[i]), float(probs[i])) for i in top_idx]
 
     return sym, prob, top_probs
+
