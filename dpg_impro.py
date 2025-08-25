@@ -115,7 +115,7 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
                 chord_map,
                 max_order=markov_order,
                 similarity_level=similarity_level,
-                use_intervals=False  # Explicitement False
+                #use_intervals=False  # Explicitement False
             )
             
         elif accomp_info == "by chord type":
@@ -128,7 +128,7 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
                 chord_map,
                 max_order=markov_order,
                 similarity_level=similarity_level,
-                use_intervals=False  # Explicitement False
+                #use_intervals=False  # Explicitement False
             )
             
         elif accomp_info == "by interval":
