@@ -1,12 +1,15 @@
 import mido
 import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
+from music21 import pitch 
 import os
 import ast
 import json
 import re
+import colorsys
 
 model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
+_pitch_color_map = {}
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
 EVAL_P_DIR = "eval/probs"
@@ -84,6 +87,13 @@ def update_oracle_progress(current_state, total_states):
         progress = current_state / (total_states - 1)
         dpg.set_value("oracle_progress", progress)
 
+def midi_to_name(midi_pitch):
+    m = int(midi_pitch)
+    names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    name = names[m % 12]
+    octave = (m // 12) - 1
+    return f"{name}{octave}"
+
 
 def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_series", chosen_tag="chosen_pie"):
     """
@@ -91,44 +101,54 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
     """
     if not top_probs and not next_prob:
         return
-
-    # Si le chosen_pitch n’est pas déjà dans top_probs, ajoute-le
+    
+    # Si le chosen_pitch n'est pas déjà dans top_probs, ajoute-le
     if next_prob is not None:
-        present = any(pitch == chosen_pitch for pitch, _ in top_probs)
+        present = any(pitch == chosen_pitch for pitch, *_ in top_probs)
         if not present:
             top_probs = top_probs + [(chosen_pitch, next_prob)]
-
+    
     probs = [p[1] for p in top_probs]  # probabilités
-    pitches = [pitch for pitch, _ in top_probs]  # numéros de pitch
-
-    # on créé des labels avec pitch  + la proba de la note
-
-    pitch_labels = [f"{pitch} : {prob:.2f}" for pitch, prob in top_probs]
-
+    pitches = [p[0] for p in top_probs]  # numéros de pitch
+    pitch_names = [midi_to_name(p) for p in pitches]
+    
+    # on créé des labels avec pitch + la proba de la note
+    pitch_labels = [f"{name} : {prob:.2f}" for name, prob in zip(pitch_names, probs)]
+    
+    my_colors = [
+    [255, 99, 71, 255],   # tomato
+    [60, 179, 113, 255],  # mediumseagreen
+    [65, 105, 225, 255],  # royalblue
+    [255, 215, 0, 255],   # gold
+    [100, 99, 71, 255],
+    [100, 100, 71, 255],
+    ]
+    with dpg.colormap_registry():
+        cmap_tag = dpg.add_colormap(my_colors, qualitative=True, tag="my_cmap")#type:ignore
     try:
         # Vérifier si l'axe Y existe déjà, sinon le créer
         y_axis_id = "y_axis_markov"
-
+        
         # Supprimer l'ancienne série de données
         if dpg.does_item_exist(bar_tag):
             dpg.delete_item(bar_tag)
-
+        
         # Si l'axe Y existe, on le nettoie
         if dpg.does_item_exist(y_axis_id):
             dpg.delete_item(y_axis_id)
-
+        
         # Créer un nouvel axe Y pour le graphique
         with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True,
-                           no_tick_marks=True, no_tick_labels=True, tag=y_axis_id):
+                          no_tick_marks=True, no_tick_labels=True, tag=y_axis_id):
             dpg.set_axis_limits(y_axis_id, 0, 1)
-
+            
             # Création du camembert avec les nouvelles données
             dpg.add_pie_series(
-                0.5, 0.5,         # centre x, y
-                0.4,              # rayon
-                probs,            # valeurs (proportions)
-                pitch_labels,     # étiquettes
-                tag=bar_tag,      # identifiant pour référence future
+                0.5, 0.5,  # centre x, y
+                0.4,       # rayon
+                probs,     # valeurs (proportions)
+                pitch_labels,  # étiquettes
+                tag=bar_tag,   # identifiant pour référence future
                 parent=y_axis_id,
                 normalize=True
             )
@@ -141,14 +161,14 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
                 if pitch == chosen_pitch:
                     chosen_idx = i
                     break
-
+            
             if chosen_idx >= 0:
                 chosen_prob = probs[chosen_idx]
                 chosen_note = pitch_labels[chosen_idx]
                 dpg.set_value("markov_info_text", f"Note choisie: {chosen_note} (prob: {chosen_prob:.2f})")
             else:
                 dpg.set_value("markov_info_text", f"Note choisie: {chosen_pitch} (non représentée dans le top)")
-        
+                
     except Exception as e:
         print(f"Erreur update pie chart: {e}")
 
@@ -440,6 +460,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
                 values=[0.6, 0.3, 0.1],
                 labels= ["pitch_1 : probs_1", "pitch_2 : probs_2", "pitch_3 : probs_3"],
             )
+
     dpg.add_text(tag="markov_info_text")
     
 

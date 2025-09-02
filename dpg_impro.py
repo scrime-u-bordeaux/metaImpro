@@ -10,9 +10,11 @@ import os
 import json
 from factor_oracle import OracleBuilder, generate_note_oracle
 from midi_processor import MidiSymbolProcessor
-from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key, build_interval_dict
-from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord, transpose_chord_data
+from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
+from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord, transpose_chord_data, play_mp3
+from interval import generate_symbols_intervals, build_interval_table, build_interval_dict
 from impro_genie import PianoGenieEngine
+
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
@@ -21,7 +23,7 @@ KEYBOARD_MAPPING = {
     pygame.K_t: 4, pygame.K_y: 5, pygame.K_u: 6, pygame.K_i: 7,
 }
 
-PROGRESSION = ["C7", "C7", "C7", "C7", "F7", "F7", "C7", "C7", "G7", "F7", "C7", "G7"]
+PROGRESSION = ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7", "E7"]
 riff = [0, 2, 0, 2, 0, 4, 0, 4]
 xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
 
@@ -132,18 +134,37 @@ def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level
             )
             
         elif accomp_info == "by interval":
-            """chord_map = get_pitches_by_chord(xml_folder, progression, group_by_type=True, max_notes_per_chord=600)
-            inter_dict = build_interval_dict(chord_map)
-            result['chord_map'] = inter_dict
-            
-            # Build VLMC tables basées sur les intervalles
+            # 1) récupérer les pitches groupés par type (comme "by chord type")
+            chord_map = get_pitches_by_chord(
+                xml_folder,
+                progression,
+                group_by_type=True,
+                max_notes_per_chord=600
+            )
+            chord_map = transpose_chord_data(chord_map, progression)
+
+            # 2) construire le dictionnaire d'intervalles pour chaque accord
+            #    (build_interval_dict attend chord_map: chord -> list[pitches])
+            interval_dict = build_interval_dict(chord_map)
+
+            # 3) construire la table de transitions d'intervalles (ordre = markov_order)
+            #    build_interval_table prend data: dict->sequences et max_order (ordre de backoff)
+            interval_table = build_interval_table(interval_dict, max_order=markov_order)
+
+            # 4) sauvegarder dans le résultat pour usage ultérieur (génération)
+            result['chord_map'] = chord_map
+            result['interval_dict'] = interval_dict
+            result['interval_table'] = interval_table
+
+            # 5) construire les VLMC en mode "intervalles"
+            #    make_vlmc_for_chord doit accepter use_intervals=True pour construire
+            #    ses modèles en travaillant sur les intervalles plutôt que sur les pitches bruts.
             result['vlmcs'] = make_vlmc_for_chord(
-                chord_map,  # Attention : utilisez chord_map, pas inter_dict !
+                chord_map,
                 max_order=markov_order,
                 similarity_level=similarity_level,
-                use_intervals=True  # Intervalles activés
-            )"""
-            pass
+                use_intervals=True
+            )
         
     result['progression'] = progression
     return result
@@ -230,12 +251,13 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         sym, next_prob, top_probs = generate_symbol_vlmc(
         previous_symbols   = state['symbol_history'],
         vlmc_table         = state['vlmc_table'],
-        all_keys           = state['notes'],
         max_order          = config['markov_order'],
         gap                = gap,
         contour            = True,
         similarity_level= config['sim_lvl'],
-        n_candidates = config['n_candidat']
+        n_candidates = config['n_candidat'],
+        current_chord=None,  
+        use_scale_filter=False
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -269,12 +291,13 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
-            all_keys           = all_keys,
             max_order          = config['markov_order'],
             gap                = gap,
             contour            = True,
             similarity_level   = config['sim_lvl'],
-            n_candidates = config['n_candidat']
+            n_candidates = config['n_candidat'],
+            current_chord=chord_name,  
+            use_scale_filter=False
         )
 
         # update that chord's own history
@@ -341,6 +364,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     Args:
         note_index (int): Index de la note MIDI (0-127)
+        velocity (int): Vélocité MIDI (0-127)
         state (dict): Contient prev_state, context, note_buffer, etc.
         config (dict): Configuration d'impro (mode, p, default_velocity)
         synth (fluidsynth.Synth): Synthétiseur FluidSynth
@@ -365,7 +389,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     # Génération de la note selon le mode
     if config['mode'] == 'oracle':
-        new_state, raw_note, _ = generate_note_oracle(
+        new_state, raw_note, type_link = generate_note_oracle(
             state['prev_state'],
             state['trans_oracle'],
             state['supply'],
@@ -382,27 +406,30 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     elif config['mode'] == 'markov':
         # Markov: contexte variable
         sym, next_prob, top_probs = generate_symbol_vlmc(
-        previous_symbols   = state['symbol_history'],
-        vlmc_table         = state['vlmc_table'],
-        all_keys           = state['notes'],
-        max_order          = config['markov_order'],
-        gap                = gap,
-        contour            = True,
-        similarity_level= config['sim_lvl'],
-        n_candidates = config['n_candidat']
+            previous_symbols   = state['symbol_history'],
+            vlmc_table         = state['vlmc_table'],
+            max_order          = config['markov_order'],
+            gap                = gap,
+            contour            = True,
+            similarity_level   = config['sim_lvl'],
+            n_candidates       = config['n_candidat'],
+            current_chord="C7",  # L'accord actuel de votre progression
+    use_scale_filter=True
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
+        # Historique pour display
+        state['pitch_history'].append(sym['pitch'])
         # Conserver uniquement les derniers N selon markov_order
-        max_ord = config['markov_order']
-        if max_ord > 0 and len(state['symbol_history']) > max_ord:
-            state['symbol_history'] = state['symbol_history'][-max_ord:]
+        if len(state['symbol_history']) > config['markov_order'] + 1:
+            state['symbol_history'].pop(0)
+            state['pitch_history'].pop(0)
         raw_note = sym
 
         if log_callback and top_probs:
-            p = sym['pitch']
-            choices = [(s['pitch'], prob) for s, prob in top_probs]
-            log_callback(f"__markov_probs__:{p}:{choices}:{next_prob}")
+            chosen = sym['pitch']
+            choices = [(s['pitch'], p) for s, p in top_probs]
+            log_callback(f"__markov_probs__:{chosen}:{choices}:{next_prob}")
 
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
@@ -421,12 +448,13 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
-            all_keys           = all_keys,
             max_order          = config['markov_order'],
             gap                = gap,
             contour            = True,
             similarity_level   = config['sim_lvl'],
-            n_candidates = config['n_candidat']
+            n_candidates       = config['n_candidat'],
+            current_chord=chord_name, 
+            use_scale_filter=True
         )
 
         # update that chord's own history
@@ -442,23 +470,27 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
 
     elif config['mode'] == 'Autoencoder':
-        btn_idx = note_index  # ou une table de mapping si nécessaire
-        midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx)
-        raw_note = midi_pitch
-        log(f"Autoencoder MIDI → bouton {btn_idx} → pitch {midi_pitch}")
+        btn_idx = note_index  # Use note_index directly as button index
+        # génère une note via le décodeur
+        midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
+        raw_note = [midi_pitch]  # Wrap in list to match expected format
 
-
-    # Jouer la note ou accord
-    pitches_to_play, duration, _ = normalize_note(raw_note, dur_eff, default_velocity=velocity)
+    # Jouer note ou accord
+    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+    # Use the MIDI velocity instead of the one from normalize_note
     vel = velocity
     for p in pitches_to_play:
-        synth.noteon(0, p, vel)            
-        
+        synth.noteon(0, p, vel)
+    
+    # Store pitches in note_buffer using note_index as key
     state['note_buffer'][note_index] = pitches_to_play
+    
+    # Initialize key_start dict if it doesn't exist
+    if 'key_start' not in last_times:
+        last_times['key_start'] = {}
     last_times['key_start'][note_index] = now
-    log(
-        f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}"
-    )
+    
+    log(f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
 
 def handle_keyup_midi(note_index, state, synth, history, last_times):
     """
