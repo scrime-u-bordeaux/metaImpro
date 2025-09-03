@@ -1,5 +1,5 @@
 from music21 import * # type:ignore
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Callable
 from time import sleep
 from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key, truncate_key
 import os
@@ -7,6 +7,7 @@ import re
 import numpy as np
 import pygame
 import time
+import threading
 
 CHORD_TO_SCALE = {
     # Accords Majeurs et leurs extensions
@@ -35,103 +36,7 @@ CHORD_TO_SCALE = {
     'aug': scale.WholeToneScale,
     '+': scale.WholeToneScale,
 }
-
-def play_mp3(file_path: str):
-    """
-    Play an MP3 file with pygame and wait until it finishes.
-    """
-    try:
-        pygame.mixer.init()
-        pygame.mixer.music.load(file_path)
-        pygame.mixer.music.play()
-
-        print(f"Playing {file_path}...")
-
-        # Loop until playback finishes
-        while pygame.mixer.music.get_busy():
-            time.sleep(0.1)  # sleep a little to free CPU
-    except Exception as e:
-        print(f"Error playing {file_path}: {e}")
-        
-def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
-    """
-    Filtre les symboles candidats selon la gamme de l'accord courant
     
-    Args:
-        symbols_list: Liste des clés (tuples) candidates du VLMC
-        counts: Array numpy des comptages correspondants
-        current_chord: Accord courant (ex: "C7", "Fm7")
-        strict_mode: Si True, rejette les accords avec des notes hors gamme
-                    Si False, accepte les accords avec au moins une note dans la gamme
-    
-    Returns:
-        (filtered_symbols, filtered_counts): Listes filtrées
-    """
-    if not current_chord:
-        return symbols_list, counts
-    
-    try:
-        # Parser l'accord pour extraire root et type
-        CHORD_ROOT_RE = re.compile(r'^([A-Ga-g][#b]?)(.*)$')
-        figure = current_chord.split('/')[0].strip()
-        m = CHORD_ROOT_RE.match(figure)
-        if not m:
-            return symbols_list, counts
-            
-        root, chord_type = m.group(1), m.group(2).strip()
-        
-        # Récupérer la classe de gamme
-        scale_class = CHORD_TO_SCALE.get(chord_type, scale.MajorScale)
-        
-        # Créer la gamme
-        root_pitch = pitch.Pitch(root)
-        chord_scale = scale_class(root_pitch)
-        
-        # Générer les classes de hauteur de la gamme (0-11)
-        scale_pitch_classes = set()
-        for degree in range(1, 8):
-            try:
-                scale_pitch = chord_scale.pitchFromDegree(degree)
-                scale_pitch_classes.add(scale_pitch.midi % 12)
-            except:
-                continue
-        
-        # Filtrer les symboles
-        filtered_symbols = []
-        filtered_counts = []
-        
-        for symbol_key, count in zip(symbols_list, counts):
-            keep_symbol = False
-            
-            if symbol_key[0] == "note":  # Note simple
-                pitch_class = symbol_key[1] % 12
-                if pitch_class in scale_pitch_classes:
-                    keep_symbol = True
-                    
-            elif symbol_key[0] == "chord":  # Accord
-                pitches = symbol_key[1]
-                in_scale_count = sum(1 for p in pitches if (p % 12) in scale_pitch_classes)
-                
-                if strict_mode:
-                    # Toutes les notes doivent être dans la gamme
-                    keep_symbol = (in_scale_count == len(pitches))
-                else:
-                    # Au moins une note doit être dans la gamme
-                    keep_symbol = (in_scale_count > 0)
-            
-            if keep_symbol:
-                filtered_symbols.append(symbol_key)
-                filtered_counts.append(count)
-        
-        # Si aucun symbole ne passe le filtre, retourner les originaux
-        if not filtered_symbols:
-            return symbols_list, counts
-            
-        return filtered_symbols, np.array(filtered_counts, dtype=float)
-        
-    except Exception as e:
-        print(f"Erreur dans filter_by_scale: {e}")
-        return symbols_list, counts
 def split_chord_figure(chord):
 
     CHORD_ROOT_RE = re.compile(r'^([A-Ga-g][#b]?)(.*)$')
@@ -345,6 +250,81 @@ def chord_loop(synth,
 
         bar_index += 1
 
+def play_mp3(mp3_path: str,
+             stop_event: threading.Event,
+             progression: List[str],
+             bpm: int = 90,
+             log_callback: Optional[Callable] = None):
+
+    try:
+        pygame.mixer.init()
+        volume = 0.1
+        pygame.mixer.music.set_volume(volume)
+        # try to get accurate track length
+        track_length = None
+        try:
+            s = pygame.mixer.Sound(mp3_path)
+            track_length = float(s.get_length())
+        except Exception:
+            track_length = None
+
+        if log_callback:
+            log_callback(f"🎵 Starting MP3 backtrack at {bpm} BPM: {os.path.basename(mp3_path)} (length={track_length}s)")
+
+        beat_duration = 60.0 / bpm
+        bar_duration = 4 * beat_duration
+
+        # If we can determine how many bars are actually in the file, warn if it doesn't match progression length
+        if track_length:
+            bars_in_track = round(track_length / bar_duration)
+            if bars_in_track != len(progression):
+                if log_callback:
+                    log_callback(
+                        f"⚠️ MP3 length ≈ {track_length:.2f}s → ≈{bars_in_track} bars, but progression has {len(progression)} bars. "
+                        "This often causes out-of-sync behaviour. Consider aligning progression to the track or use an offset."
+                    )
+
+        pygame.mixer.music.load(mp3_path)
+        pygame.mixer.music.set_volume(0.1)
+        pygame.mixer.music.play(-1)  # loop indefinitely
+
+        start_time = time.monotonic()
+        last_bar_index = None
+
+        # main loop: compute position relative to the audio (use modulo track_length if available)
+        while not stop_event.is_set() and pygame.mixer.music.get_busy():
+            now = time.monotonic()
+            if track_length:
+                # use modulo so loop restarts don't accumulate drift
+                elapsed = (now - start_time) % track_length
+            else:
+                elapsed = now - start_time
+
+            total_beats = elapsed / beat_duration
+            bar_index = int(total_beats // 4)
+            beat_in_bar = (total_beats % 4) + 1.0  # 1..4
+
+            # map to progression
+            prog_index = bar_index % len(progression)
+            current_chord = progression[prog_index]
+
+            # only log/update when bar index actually changes (handles jumps)
+            if bar_index != last_bar_index:
+                last_bar_index = bar_index
+                if log_callback:
+                    log_callback(f"🎵 Bar {bar_index + 1} (prog idx {prog_index}): {current_chord} — beat {beat_in_bar:.2f} (elapsed {elapsed:.2f}s)")
+
+            # choose a sleep that is small but not busy-loop:
+            sleep(min(0.05, beat_duration / 8.0))
+
+        pygame.mixer.music.stop()
+        pygame.mixer.quit()
+        if log_callback:
+            log_callback("🎵 MP3 backtrack stopped")
+
+    except Exception as e:
+        if log_callback:
+            log_callback(f"❗ Error playing MP3: {e}")
 
 def make_vlmc_for_chord(symbol_sequences, max_order=3, similarity_level=1, use_intervals=False):
     """

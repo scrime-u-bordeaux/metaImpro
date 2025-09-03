@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple, Any
 import random
 from music21 import pitch, scale
 import re
+
 def symbol_to_key(symbol: Any) -> Tuple:
     """
     Transforme un symbole (note ou accord) ou un pitch simple en tuple hashable.
@@ -297,7 +298,7 @@ def generate_symbol_vlmc(
             break
     else:
         # Fallback marginal
-        print(f"[DEBUG-L{similarity_level}] fallback marginal pour contexte {context!r}")
+        print(f"[DEBUG-L{similarity_level}] Pas de successeurs  à  {context!r}")
         marg_counts: Dict[Tuple, float] = defaultdict(float)
         for sub_dist in vlmc_table.values():
             for key_, cnt in sub_dist.items():
@@ -329,7 +330,7 @@ def generate_symbol_vlmc(
 
     # Filtrage des notes out
     if use_scale_filter and current_chord:
-        symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord)
+        symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord, True)
 
     # 5) Fallback marginal si vide
     if len(symbols_list) == 0 or counts.sum() == 0:

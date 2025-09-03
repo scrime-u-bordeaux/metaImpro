@@ -414,7 +414,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             similarity_level   = config['sim_lvl'],
             n_candidates       = config['n_candidat'],
             current_chord="C7",  # L'accord actuel de votre progression
-    use_scale_filter=True
+            use_scale_filter=False
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -527,7 +527,6 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     # Retirer le start
     del last_times['key_start'][note_index]
 
-    
 def improvisation_loop(config, stop_event, log_callback=None):
 
     history = []
@@ -574,32 +573,53 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         # Historiques par accord pour alimenter la génération si besoin
         state['accomp_history'] = {ch: [] for ch in state['chord_map']}
-        state['accomp_start'] = time()
-        beat = 60.0 / config['bpm']
+        backtrack_bpm = 90
+        beat = 60.0 / backtrack_bpm #config['bpm']
         state['bar_dur']      = 4 * beat
-
+        state['accomp_start'] = time()
         state['accomp_stop'] = threading.Event()
         global _accomp_stop
         _accomp_stop = state['accomp_stop']
 
-        # On démarre le chord_loop en arrière‑plan,
-        # en lui passant progression & chord_map
-        threading.Thread(
-            target=chord_loop,
-            args=(
-                synth_accomp,
-                state['accomp_stop'],
-                state['progression'],
-                
-            ),
-            kwargs={
-                "bpm": config['bpm'],
-                "velocity": 60,
-                "log_callback": log_callback,
-                #"riff_pattern": riff
-            },
-            daemon=True
-        ).start()
+        use_backtrack = config['backtrack_mode_combo']
+        backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
+        
+        if use_backtrack and backtrack_path and os.path.exists(backtrack_path):
+            # Use MP3 backtrack
+            if log_callback:
+                log_callback(f"🎵 Using MP3 backtrack: {os.path.basename(backtrack_path)} at {backtrack_bpm} BPM")
+            
+            threading.Thread(
+                target=play_mp3,
+                args=(
+                    backtrack_path,
+                    state['accomp_stop'],
+                    state['progression'],
+                    backtrack_bpm
+                ),
+                kwargs={"log_callback": log_callback},
+                daemon=True
+            ).start()
+        else:
+            # Use chord loop instead of backtrack
+            if log_callback:
+                log_callback(f"🎹 Using chord loop accompaniment")
+            
+            threading.Thread(
+                target=chord_loop,
+                args=(
+                    synth_accomp,
+                    state['accomp_stop'],
+                    state['progression'],
+                ),
+                kwargs={
+                    "bpm": config['bpm'],
+                    "velocity": 60,
+                    "log_callback": log_callback,
+                    #"riff_pattern": riff
+                },
+                daemon=True
+            ).start()
 
     elif config["mode"] == "Autoencoder":
         engine = PianoGenieEngine(

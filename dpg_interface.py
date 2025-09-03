@@ -1,12 +1,11 @@
 import mido
 import dearpygui.dearpygui as dpg
 from dpg_impro import run_impro
-from music21 import pitch 
 import os
 import ast
 import json
 import re
-import colorsys
+import random
 
 model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
 _pitch_color_map = {}
@@ -95,14 +94,29 @@ def midi_to_name(midi_pitch):
     return f"{name}{octave}"
 
 
+def make_colors_for_labels(labels, forced_label, forced_color):
+    colors = []
+    for lab in labels:
+        if lab == forced_label:
+            colors.append(forced_color)
+        else:
+            # Générer une nuance de rouge aléatoire
+            # Rouge dominant avec variations sur les autres composantes
+            red = random.randint(180, 255)    # Rouge fort
+            green = random.randint(0, 80)     # Vert faible
+            blue = random.randint(0, 80)      # Bleu faible
+            colors.append([red, green, blue, 255])
+    return colors
+
+
 def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_series", chosen_tag="chosen_pie"):
     """
-    Met à jour le graphique avec les probabilités des notes sous forme de camembert.
+    Enhanced version of your update_pie_chart function with better info display
     """
     if not top_probs and not next_prob:
         return
     
-    # Si le chosen_pitch n'est pas déjà dans top_probs, ajoute-le
+    # If the chosen_pitch n'est pas déjà dans top_probs, ajoute-le
     if next_prob is not None:
         present = any(pitch == chosen_pitch for pitch, *_ in top_probs)
         if not present:
@@ -112,37 +126,38 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
     pitches = [p[0] for p in top_probs]  # numéros de pitch
     pitch_names = [midi_to_name(p) for p in pitches]
     
-    # on créé des labels avec pitch + la proba de la note
+    # Create labels avec pitch + la proba de la note
     pitch_labels = [f"{name} : {prob:.2f}" for name, prob in zip(pitch_names, probs)]
     
-    my_colors = [
-    [255, 99, 71, 255],   # tomato
-    [60, 179, 113, 255],  # mediumseagreen
-    [65, 105, 225, 255],  # royalblue
-    [255, 215, 0, 255],   # gold
-    [100, 99, 71, 255],
-    [100, 100, 71, 255],
-    ]
-    with dpg.colormap_registry():
-        cmap_tag = dpg.add_colormap(my_colors, qualitative=True, tag="my_cmap")#type:ignore
+    # Trouver le label correspondant au chosen_pitch pour la colormap
+    chosen_label = None
+    for i, pitch in enumerate(pitches):
+        if pitch == chosen_pitch:
+            chosen_label = pitch_labels[i]
+            break
+    
     try:
-        # Vérifier si l'axe Y existe déjà, sinon le créer
-        y_axis_id = "y_axis_markov"
+        # Supprimer l'ancienne colormap si elle existe
+        if dpg.does_item_exist("my_cmap"):
+            dpg.delete_item("my_cmap")
         
-        # Supprimer l'ancienne série de données
+        # Créer la nouvelle colormap
+        cmap_colors = make_colors_for_labels(pitch_labels, chosen_label, [0, 180, 0, 255])
+        with dpg.colormap_registry():
+            cmap_tag = dpg.add_colormap(cmap_colors, True, tag="my_cmap")
+        
+        # Bind la colormap au plot
+        dpg.bind_colormap("markov_plot", "my_cmap")
+        
+        y_axis_id = "y_axis_markov"
         if dpg.does_item_exist(bar_tag):
             dpg.delete_item(bar_tag)
-        
-        # Si l'axe Y existe, on le nettoie
         if dpg.does_item_exist(y_axis_id):
             dpg.delete_item(y_axis_id)
         
-        # Créer un nouvel axe Y pour le graphique
         with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True,
                           no_tick_marks=True, no_tick_labels=True, tag=y_axis_id):
             dpg.set_axis_limits(y_axis_id, 0, 1)
-            
-            # Création du camembert avec les nouvelles données
             dpg.add_pie_series(
                 0.5, 0.5,  # centre x, y
                 0.4,       # rayon
@@ -152,23 +167,26 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
                 parent=y_axis_id,
                 normalize=True
             )
+        # Sort all notes by probability (descending)
+        sorted_data = sorted(zip(pitches, probs, pitch_names), key=lambda x: x[1], reverse=True)
+        info_lines = ["Notes (probabilité décroissante):\n"]
+        info_chosen = []
         
-        # Mettre à jour le texte descriptif
-        if dpg.does_item_exist("markov_info_text"):
-            # Trouver l'index de la note choisie dans les probas
-            chosen_idx = -1
-            for i, pitch in enumerate(pitches):
-                if pitch == chosen_pitch:
-                    chosen_idx = i
-                    break
-            
-            if chosen_idx >= 0:
-                chosen_prob = probs[chosen_idx]
-                chosen_note = pitch_labels[chosen_idx]
-                dpg.set_value("markov_info_text", f"Note choisie: {chosen_note} (prob: {chosen_prob:.2f})")
+        for pitch, prob, note_name in sorted_data:
+            if pitch == chosen_pitch:
+                # Highlight chosen note
+                info_chosen.append(f" {note_name}: {prob:.3f} (CHOISIE)")
             else:
-                dpg.set_value("markov_info_text", f"Note choisie: {chosen_pitch} (non représentée dans le top)")
-                
+                info_lines.append(f" {note_name}: {prob:.3f}")
+        
+        display_text = "\n".join(info_lines)
+        display_chosen = "".join(info_chosen)
+        
+        if dpg.does_item_exist("markov_info_chosen"):
+            dpg.set_value("markov_info_chosen", display_chosen)
+        if dpg.does_item_exist("markov_info_text"):
+            dpg.set_value("markov_info_text", display_text)
+            
     except Exception as e:
         print(f"Erreur update pie chart: {e}")
 
@@ -202,7 +220,7 @@ def save_prob_history(prob_history, title: str, mode):
     return path
       
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag, backtrack_mod_tag = user_data
     if app_data == 'Autoencoder':
         pt_items = get_pt_files("piano_genie")
         dpg.configure_item('corpus_combo', items=pt_items, default_value=pt_items[0] if pt_items else None, label='Choisissez les poids')
@@ -216,6 +234,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
         dpg.hide_item(accomp_mod_tag)
+        dpg.hide_item(backtrack_mod_tag)
     else:
         corpus_items = get_corpus()
         dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
@@ -231,6 +250,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item(n_cand_tag)
         dpg.hide_item(bpm_tag)
         dpg.hide_item(accomp_mod_tag)
+        dpg.hide_item(backtrack_mod_tag)
     elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
@@ -242,6 +262,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("markov_text")
         dpg.hide_item(bpm_tag)
         dpg.hide_item(accomp_mod_tag)
+        dpg.hide_item(backtrack_mod_tag)
     elif app_data == 'accompagnement':
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
@@ -253,6 +274,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("markov_text")
         dpg.show_item(bpm_tag)
         dpg.show_item(accomp_mod_tag)
+        dpg.show_item(backtrack_mod_tag)
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
@@ -264,6 +286,7 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
         dpg.hide_item(accomp_mod_tag)
+        dpg.hide_item(backtrack_mod_tag)
 
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
@@ -282,7 +305,8 @@ def on_launch(sender, app_data):
         lignes.append(f"Ordre Markov : {dpg.get_value('markov_combo')}")
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
         lignes.append(f"Nombre de candidats : {dpg.get_value('n_candidat')}")
-        accomp_mod = dpg.get_value('accomp_mode_combo')
+        accomp_mode = dpg.get_value('accomp_mode_combo')
+        backtrack_mode = dpg.get_value('backtrack_mode_combo') == 'True'
     if model == 'Autoencoder':
         lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
@@ -299,7 +323,8 @@ def on_launch(sender, app_data):
         'n_candidat': None,
         'corpus': None,
         'bpm' : None,
-        'accomp_mod_tag' :None
+        'accomp_mod_tag' :None,
+        'backtrack_mod_tag': None
     }
 
     chosen = dpg.get_value('corpus_combo')
@@ -316,7 +341,8 @@ def on_launch(sender, app_data):
             bpm = int(dpg.get_value('bpm_input'))
             cfg['bpm'] = bpm
             lignes.append(f"BPM : {bpm}")
-            cfg['accomp_mod_tag'] = accomp_mod
+            cfg['accomp_mod_tag'] = accomp_mode
+            cfg['backtrack_mode_combo'] = backtrack_mode
     elif model == 'random':
         cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
     else:  # Autoencoder
@@ -363,7 +389,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input', 'accomp_mode_combo')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input', 'accomp_mode_combo', 'backtrack_mode_combo')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
@@ -414,6 +440,14 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             width=200,
             show=False
         )
+        dpg.add_combo(
+            tag='backtrack_mode_combo',
+            label='backtrack/soundfont',
+            items=['True', 'False'],
+            default_value='manual',
+            width=200,
+            show=False
+        )
         # On cache les sliders au démarrage
         dpg.hide_item('markov_combo')
         dpg.hide_item('n_candidat')
@@ -444,28 +478,13 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
     dpg.add_text("Camembert des pitchs + probas :", tag="markov_text", show=False)
     with dpg.plot(label="Probas Markov", height=400, width=500, show=False, tag="markov_plot"):
         dpg.add_plot_legend()
-
-        # create x axis
-        dpg.add_plot_axis(dpg.mvXAxis, label="", no_gridlines=True, no_tick_marks=True, no_tick_labels=True)
-        dpg.set_axis_limits(dpg.last_item(), 0, 1)
-        
-        # Création de l'axe Y initial avec une série vide
-        with dpg.plot_axis(dpg.mvYAxis, parent="markov_plot", no_gridlines=True, no_tick_marks=True, no_tick_labels=True):
-            dpg.set_axis_limits(dpg.last_item(), 0, 1)
-            # Série initiale d'exemple
-            dpg.add_pie_series(
-                x=1,
-                y=1,
-                radius=1,
-                values=[0.6, 0.3, 0.1],
-                labels= ["pitch_1 : probs_1", "pitch_2 : probs_2", "pitch_3 : probs_3"],
-            )
-
-    dpg.add_text(tag="markov_info_text")
     
+    dpg.add_text(tag="markov_info_text")
+    dpg.add_text(tag="markov_info_chosen", color=(255, 255, 0, 255))
+
 
 # Création fenêtre
-dpg.create_viewport(title='MetaImpro', width=1500, height=900)
+dpg.create_viewport(title='MetaImpro', width=1500, height=1200)
 dpg.setup_dearpygui()
 dpg.set_exit_callback(on_exit)
 dpg.show_viewport()
