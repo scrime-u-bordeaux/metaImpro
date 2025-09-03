@@ -251,10 +251,11 @@ def chord_loop(synth,
         bar_index += 1
 
 def play_mp3(mp3_path: str,
-             stop_event: threading.Event,
-             progression: List[str],
-             bpm: int = 90,
-             log_callback: Optional[Callable] = None):
+            stop_event: threading.Event,
+            progression: List[str],
+            bpm: int = 90,
+            is_pause = False,
+            log_callback: Optional[Callable] = None):
 
     try:
         pygame.mixer.init()
@@ -274,15 +275,7 @@ def play_mp3(mp3_path: str,
         beat_duration = 60.0 / bpm
         bar_duration = 4 * beat_duration
 
-        # If we can determine how many bars are actually in the file, warn if it doesn't match progression length
-        if track_length:
-            bars_in_track = round(track_length / bar_duration)
-            if bars_in_track != len(progression):
-                if log_callback:
-                    log_callback(
-                        f"⚠️ MP3 length ≈ {track_length:.2f}s → ≈{bars_in_track} bars, but progression has {len(progression)} bars. "
-                        "This often causes out-of-sync behaviour. Consider aligning progression to the track or use an offset."
-                    )
+
 
         pygame.mixer.music.load(mp3_path)
         pygame.mixer.music.set_volume(0.1)
@@ -316,7 +309,8 @@ def play_mp3(mp3_path: str,
 
             # choose a sleep that is small but not busy-loop:
             sleep(min(0.05, beat_duration / 8.0))
-
+        if is_pause:
+            pygame.mixer.pause()
         pygame.mixer.music.stop()
         pygame.mixer.quit()
         if log_callback:

@@ -414,7 +414,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             similarity_level   = config['sim_lvl'],
             n_candidates       = config['n_candidat'],
             current_chord="C7",  # L'accord actuel de votre progression
-            use_scale_filter=False
+            use_scale_filter=True
         )
         # Mise à jour du contexte
         state['symbol_history'].append(sym)
@@ -581,7 +581,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         global _accomp_stop
         _accomp_stop = state['accomp_stop']
 
-        use_backtrack = config['backtrack_mode_combo']
+        use_backtrack = config['backtrack_mode']
         backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
         
         if use_backtrack and backtrack_path and os.path.exists(backtrack_path):

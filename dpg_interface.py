@@ -18,8 +18,6 @@ BASENAME = "probs"
 EXT = ".json"
 
 # Variables globales pour gérer le thread d'impro
-_impro_thread = None
-_stop_event = None
 note_history = []
 prob_history = []
 
@@ -220,7 +218,7 @@ def save_prob_history(prob_history, title: str, mode):
     return path
       
 def on_model_change(sender, app_data, user_data):
-    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag, backtrack_mod_tag = user_data
+    slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag, backtrack_checkbox_tag= user_data
     if app_data == 'Autoencoder':
         pt_items = get_pt_files("piano_genie")
         dpg.configure_item('corpus_combo', items=pt_items, default_value=pt_items[0] if pt_items else None, label='Choisissez les poids')
@@ -234,7 +232,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
         dpg.hide_item(accomp_mod_tag)
-        dpg.hide_item(backtrack_mod_tag)
+        dpg.hide_item(backtrack_checkbox_tag)
+        dpg.hide_item(backtrack_checkbox_tag)
     else:
         corpus_items = get_corpus()
         dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
@@ -250,7 +249,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item(n_cand_tag)
         dpg.hide_item(bpm_tag)
         dpg.hide_item(accomp_mod_tag)
-        dpg.hide_item(backtrack_mod_tag)
+        dpg.hide_item(backtrack_checkbox_tag)
+
     elif app_data == 'markov':
         dpg.hide_item(slider_tag)
         dpg.show_item(markov_tag)
@@ -262,7 +262,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("markov_text")
         dpg.hide_item(bpm_tag)
         dpg.hide_item(accomp_mod_tag)
-        dpg.hide_item(backtrack_mod_tag)
+        dpg.hide_item(backtrack_checkbox_tag)
+
     elif app_data == 'accompagnement':
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
@@ -274,7 +275,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.show_item("markov_text")
         dpg.show_item(bpm_tag)
         dpg.show_item(accomp_mod_tag)
-        dpg.show_item(backtrack_mod_tag)
+        dpg.show_item(backtrack_checkbox_tag)
+
     else:
         dpg.hide_item(slider_tag)
         dpg.hide_item(markov_tag)
@@ -286,7 +288,8 @@ def on_model_change(sender, app_data, user_data):
         dpg.hide_item("oracle_text")
         dpg.hide_item("markov_text")
         dpg.hide_item(accomp_mod_tag)
-        dpg.hide_item(backtrack_mod_tag)
+        dpg.hide_item(backtrack_checkbox_tag)
+
 
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
@@ -306,7 +309,8 @@ def on_launch(sender, app_data):
         lignes.append(f"Similarity level : {dpg.get_value('similarity_combo')}")
         lignes.append(f"Nombre de candidats : {dpg.get_value('n_candidat')}")
         accomp_mode = dpg.get_value('accomp_mode_combo')
-        backtrack_mode = dpg.get_value('backtrack_mode_combo') == 'True'
+        backtrack_mode = dpg.get_value('backtrack_checkbox')
+
     if model == 'Autoencoder':
         lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
@@ -324,7 +328,7 @@ def on_launch(sender, app_data):
         'corpus': None,
         'bpm' : None,
         'accomp_mod_tag' :None,
-        'backtrack_mod_tag': None
+        'backtrack_mod_tag': None,
     }
 
     chosen = dpg.get_value('corpus_combo')
@@ -342,7 +346,7 @@ def on_launch(sender, app_data):
             cfg['bpm'] = bpm
             lignes.append(f"BPM : {bpm}")
             cfg['accomp_mod_tag'] = accomp_mode
-            cfg['backtrack_mode_combo'] = backtrack_mode
+            cfg['backtrack_mode'] = backtrack_mode
     elif model == 'random':
         cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
     else:  # Autoencoder
@@ -389,7 +393,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             default_value='oracle',
             width=200,
             callback=on_model_change,
-            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input', 'accomp_mode_combo', 'backtrack_mode_combo')   # on passe le tag du slider qu’on va créer
+            user_data=('oracle_slider_p', 'markov_combo', 'oracle_progress', 'similarity_combo', 'n_candidat', 'bpm_input', 'accomp_mode_combo', 'backtrack_checkbox')   # on passe le tag du slider qu’on va créer
         )
 
         # Combo Markov
@@ -440,12 +444,10 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
             width=200,
             show=False
         )
-        dpg.add_combo(
-            tag='backtrack_mode_combo',
+        dpg.add_checkbox(
+            tag='backtrack_checkbox',
             label='backtrack/soundfont',
-            items=['True', 'False'],
-            default_value='manual',
-            width=200,
+            default_value=False,  # False corresponds to unchecked (was 'False' string)
             show=False
         )
         # On cache les sliders au démarrage
