@@ -188,7 +188,7 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         return symbols_list, counts
     
     symbols_list, counts = zip(*valid_pairs)
-    symbols_list, counts = list(symbols_list), list(counts)
+    symbols_list, counts = list(symbols_list), np.array(counts, dtype=float)  # Ensure counts is numpy array
     
     try:
         # Parser l'accord pour extraire root et type
@@ -253,14 +253,13 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         
         # Si aucun symbole ne passe le filtre, retourner les originaux
         if not filtered_symbols:
-            return symbols_list, counts
+            return symbols_list, counts  # counts is already a numpy array now
             
         return filtered_symbols, np.array(filtered_counts, dtype=float)
         
     except Exception as e:
         print(f"Erreur dans filter_by_scale: {e}")
-        return symbols_list, counts
-
+        return symbols_list, counts  # counts is already a numpy array now
     
 def generate_symbol_vlmc(
     previous_symbols: List[Any],

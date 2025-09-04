@@ -667,18 +667,17 @@ def improvisation_loop(config, stop_event, log_callback=None):
             try:
                 midi_port = mido.open_input(config['device']) #type:ignore
                 print(f"MIDI mode actif avec le port : {config['device']}")
-                
+                print("bonjour")
                 while not stop_event.is_set():
+                    for msg in midi_port:
                     # Utiliser polling avec timeout pour vérifier stop_event
-                    if midi_port.poll():
-                        msg = midi_port.receive(block=False)
-                        if msg.type == 'note_on' and msg.velocity > 0:
+                        if msg.type == 'note_on' and msg.velocity > 0:                                                        
                             handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
                         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                             handle_keyup_midi(msg.note, state, synth, history, last_times)
-                    else:
-                        # Petite pause si aucun message MIDI
-                        threading.Event().wait(0.01)  # 10ms
+                        else:
+                            # Petite pause si aucun message MIDI
+                            threading.Event().wait(0.01)  # 10ms
                         
                 midi_port.close()
                 
