@@ -176,12 +176,19 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         current_chord: Accord courant (ex: "C7", "Fm7")
         strict_mode: Si True, rejette les accords avec des notes hors gamme
                     Si False, accepte les accords avec au moins une note dans la gamme
-    
     Returns:
         (filtered_symbols, filtered_counts): Listes filtrées
     """
     if not current_chord:
         return symbols_list, counts
+    
+    # Filtrer les None dès le début
+    valid_pairs = [(symbol, count) for symbol, count in zip(symbols_list, counts) if symbol is not None]
+    if not valid_pairs:
+        return symbols_list, counts
+    
+    symbols_list, counts = zip(*valid_pairs)
+    symbols_list, counts = list(symbols_list), list(counts)
     
     try:
         # Parser l'accord pour extraire root et type
@@ -217,14 +224,19 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         filtered_counts = []
         
         for symbol_key, count in zip(symbols_list, counts):
+            # Vérification supplémentaire au cas où un None aurait échappé
+            if symbol_key is None:
+                continue
+                
             keep_symbol = False
             
-            if symbol_key[0] == "note":  # Note simple
+            if symbol_key[0] == "note":
+                # Note simple
                 pitch_class = symbol_key[1] % 12
                 if pitch_class in scale_pitch_classes:
                     keep_symbol = True
-                    
-            elif symbol_key[0] == "chord":  # Accord
+            elif symbol_key[0] == "chord":
+                # Accord
                 pitches = symbol_key[1]
                 in_scale_count = sum(1 for p in pitches if (p % 12) in scale_pitch_classes)
                 
@@ -248,6 +260,7 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
     except Exception as e:
         print(f"Erreur dans filter_by_scale: {e}")
         return symbols_list, counts
+
     
 def generate_symbol_vlmc(
     previous_symbols: List[Any],

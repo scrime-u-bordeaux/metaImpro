@@ -1,6 +1,6 @@
 import mido
 import dearpygui.dearpygui as dpg
-from dpg_impro import run_impro
+from dpg_impro import run_impro, stop_impro_thread
 import os
 import ast
 import json
@@ -8,7 +8,7 @@ import re
 import random
 
 model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
-_pitch_color_map = {}
+is_impro_running = False
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
 EVAL_P_DIR = "eval/probs"
@@ -293,6 +293,12 @@ def on_model_change(sender, app_data, user_data):
 
 # callback pour afficher et récupérer les paramètres
 def on_launch(sender, app_data):
+    global is_impro_running, prob_history
+    
+    # Si l'improvisation est en cours, l'arrêter
+    if is_impro_running:
+        stop_impro()
+        return
     lignes = []
     model = dpg.get_value('model_combo')
     lignes.append(f"Modèle : {model}")
@@ -352,12 +358,42 @@ def on_launch(sender, app_data):
     else:  # Autoencoder
         cfg['corpus'] = os.path.join('piano_genie', chosen)
 
+    is_impro_running = True
+    update_button_text()
+
     save_prob_history(prob_history, chosen, model)
     run_impro(cfg, append_log_entry)
 
-def on_exit():
+def stop_impro():
+    global is_impro_running
+    
+    # Arrêter le thread d'improvisation
+    stop_impro_thread()
+    
+    is_impro_running = False
+    update_button_text()
+    
+    # Sauvegarder l'historique à l'arrêt
     mode = dpg.get_value('model_combo')
     save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
+    
+    append_log_entry("Improvisation arrêtée")
+
+# Nouvelle fonction pour mettre à jour le texte du bouton
+def update_button_text():
+    if is_impro_running:
+        dpg.configure_item("launch_button", label="Arrêter l'Impro")
+    else:
+        dpg.configure_item("launch_button", label="Commencer à Improviser")
+
+# Modifiez la fonction on_exit pour gérer l'arrêt propre
+def on_exit():
+    global is_impro_running
+    if is_impro_running:
+        stop_impro()
+    else:
+        mode = dpg.get_value('model_combo')
+        save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
 
 
 dpg.create_context()
@@ -458,7 +494,7 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
     dpg.add_spacer(height=20)
 
     with dpg.group(horizontal=True):
-        dpg.add_button(label='Commencer à Improviser', callback=on_launch)
+        dpg.add_button(label='Commencer à Improviser', callback=on_launch, tag="launch_button")
         dpg.add_text("", tag='summary_text')  # widget de résumé à droite
 
     dpg.add_spacer(height=10)

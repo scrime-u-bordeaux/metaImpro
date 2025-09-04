@@ -297,7 +297,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             similarity_level   = config['sim_lvl'],
             n_candidates = config['n_candidat'],
             current_chord=chord_name,  
-            use_scale_filter=False
+            use_scale_filter=True
         )
 
         # update that chord's own history
@@ -528,7 +528,8 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     del last_times['key_start'][note_index]
 
 def improvisation_loop(config, stop_event, log_callback=None):
-
+    """Boucle principale d'improvisation avec gestion d'arrêt améliorée."""
+    
     history = []
 
     global log
@@ -537,164 +538,203 @@ def improvisation_loop(config, stop_event, log_callback=None):
             log_callback(msg)
         history.append(msg)
 
-    data = load_symbols(
-        config['corpus'], config['mode'],
-        config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION, config.get("accomp_mod_tag")
-    )
-
-    symbols = data['symbols']
-    initial = symbols[0] if symbols else {'type': 'note', 'pitch': 60, 'duration': 0, 'velocity': 110}
-    
-    state: Dict[str, Any] = {
-        'prev_state':    0,
-        'symbol_history':[initial],
-        'pitch_history': [initial['pitch'] if initial['type']=='note' else initial['pitch'][0]],
-        'symbols':       symbols,
-        'note_buffer':   {}
-    }
-
-    synth = init_audio(config['sf2_path'])
-    random_preset = [0, 11, 12, 16, 18]
-    synth_accomp = init_audio(config['sf2_path'], preset=random.choice(random_preset))
-
-    # Attach mode-specific data
-    if config['mode'] == 'oracle':
-        state['trans_oracle'] = data['trans_oracle']
-        state['supply'] = data['supply']
-    elif config['mode'] == 'markov':
-        state['vlmc_table'] = data['vlmc_table']
-        state['notes'] = data['notes']
-
-    elif config['mode'] == 'accompagnement':
-        # On récupère directement le chord_map et les VLMCs générés par load_symbols
-        state['chord_map'] = data['chord_map']      # { accord: [hauteurs MIDI] }
-        state['vlmcs']     = data['vlmcs']          # { accord: (vlmc_table, all_keys) }
-        state['progression'] = data['progression']
-
-        # Historiques par accord pour alimenter la génération si besoin
-        state['accomp_history'] = {ch: [] for ch in state['chord_map']}
-        backtrack_bpm = 90
-        beat = 60.0 / backtrack_bpm #config['bpm']
-        state['bar_dur']      = 4 * beat
-        state['accomp_start'] = time()
-        state['accomp_stop'] = threading.Event()
-        global _accomp_stop
-        _accomp_stop = state['accomp_stop']
-
-        use_backtrack = config['backtrack_mode']
-        backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
-        
-        if use_backtrack and backtrack_path and os.path.exists(backtrack_path):
-            # Use MP3 backtrack
-            if log_callback:
-                log_callback(f"🎵 Using MP3 backtrack: {os.path.basename(backtrack_path)} at {backtrack_bpm} BPM")
-            
-            threading.Thread(
-                target=play_mp3,
-                args=(
-                    backtrack_path,
-                    state['accomp_stop'],
-                    state['progression'],
-                    backtrack_bpm
-                ),
-                kwargs={"log_callback": log_callback},
-                daemon=True
-            ).start()
-        else:
-            # Use chord loop instead of backtrack
-            if log_callback:
-                log_callback(f"🎹 Using chord loop accompaniment")
-            
-            threading.Thread(
-                target=chord_loop,
-                args=(
-                    synth_accomp,
-                    state['accomp_stop'],
-                    state['progression'],
-                ),
-                kwargs={
-                    "bpm": config['bpm'],
-                    "velocity": 60,
-                    "log_callback": log_callback,
-                    #"riff_pattern": riff
-                },
-                daemon=True
-            ).start()
-
-    elif config["mode"] == "Autoencoder":
-        engine = PianoGenieEngine(
-            model_path=data["model_path"],
-            config_path=data["config_path"]
+    try:
+        data = load_symbols(
+            config['corpus'], config['mode'],
+            config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION, config.get("accomp_mod_tag")
         )
-        engine.reset_generation()
-        state["engine"] = engine
 
-    # Random and Markov need pitches list
-    if config['mode'] in ('markov', 'random'):
-        state['unique_pitches'] = data['unique_pitches']
-    
-    
-    last_times = {
-        'key_start': {}, 'last_note_end': None,
-        'last_note_duration': 0.1, 'prev_key_index': None
-    }
-    use_pygame = "Midi Through:Midi Through Port-0 14:0"
-    if config['device'] == use_pygame:
-        print("🎹 Mode clavier Pygame activé (Midi Through détecté)")
-        pygame.init()
-        pygame.display.set_mode((1, 1))
-        while not stop_event.is_set():
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    stop_event.set()
-                elif ev.type == pygame.KEYDOWN and ev.key in KEYBOARD_MAPPING:
-                    last_times['key_start'][ev.key] = time()
-                    handle_keydown(ev, state, config, synth, history, last_times, log_callback)
-                elif ev.type == pygame.KEYUP and ev.key in last_times['key_start']:
-                    handle_keyup(ev, state, synth, history, last_times)
-        pygame.quit()
+        symbols = data['symbols']
+        initial = symbols[0] if symbols else {'type': 'note', 'pitch': 60, 'duration': 0, 'velocity': 110}
+        
+        state: Dict[str, Any] = {
+            'prev_state':    0,
+            'symbol_history':[initial],
+            'pitch_history': [initial['pitch'] if initial['type']=='note' else initial['pitch'][0]],
+            'symbols':       symbols,
+            'note_buffer':   {}
+        }
 
-    else:
+        synth = init_audio(config['sf2_path'])
+        random_preset = [0, 11, 12, 16, 18]
+        synth_accomp = init_audio(config['sf2_path'], preset=random.choice(random_preset))
+
+        # Attach mode-specific data
+        if config['mode'] == 'oracle':
+            state['trans_oracle'] = data['trans_oracle']
+            state['supply'] = data['supply']
+        elif config['mode'] == 'markov':
+            state['vlmc_table'] = data['vlmc_table']
+            state['notes'] = data['notes']
+
+        elif config['mode'] == 'accompagnement':
+            # On récupère directement le chord_map et les VLMCs générés par load_symbols
+            state['chord_map'] = data['chord_map']      # { accord: [hauteurs MIDI] }
+            state['vlmcs']     = data['vlmcs']          # { accord: (vlmc_table, all_keys) }
+            state['progression'] = data['progression']
+
+            # Historiques par accord pour alimenter la génération si besoin
+            state['accomp_history'] = {ch: [] for ch in state['chord_map']}
+            backtrack_bpm = 90
+            beat = 60.0 / backtrack_bpm #config['bpm']
+            state['bar_dur']      = 4 * beat
+            state['accomp_start'] = time()
+            state['accomp_stop'] = threading.Event()
+            global _accomp_stop
+            _accomp_stop = state['accomp_stop']
+
+            use_backtrack = config['backtrack_mode']
+            backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
+            
+            if use_backtrack and backtrack_path and os.path.exists(backtrack_path):
+                # Use MP3 backtrack
+                if log_callback:
+                    log_callback(f"Using MP3 backtrack: {os.path.basename(backtrack_path)} at {backtrack_bpm} BPM")
+                
+                threading.Thread(
+                    target=play_mp3,
+                    args=(
+                        backtrack_path,
+                        state['accomp_stop'],
+                        state['progression'],
+                        backtrack_bpm
+                    ),
+                    kwargs={"log_callback": log_callback},
+                    daemon=True
+                ).start()
+            else:
+                # Use chord loop instead of backtrack
+                if log_callback:
+                    log_callback(f"Using chord loop accompaniment")
+                
+                threading.Thread(
+                    target=chord_loop,
+                    args=(
+                        synth_accomp,
+                        state['accomp_stop'],
+                        state['progression'],
+                    ),
+                    kwargs={
+                        "bpm": config['bpm'],
+                        "velocity": 60,
+                        "log_callback": log_callback,
+                        #"riff_pattern": riff
+                    },
+                    daemon=True
+                ).start()
+
+        elif config["mode"] == "Autoencoder":
+            engine = PianoGenieEngine(
+                model_path=data["model_path"],
+                config_path=data["config_path"]
+            )
+            engine.reset_generation()
+            state["engine"] = engine
+
+        # Random and Markov need pitches list
+        if config['mode'] in ('markov', 'random'):
+            state['unique_pitches'] = data['unique_pitches']
+        
+        
+        last_times = {
+            'key_start': {}, 'last_note_end': None,
+            'last_note_duration': 0.1, 'prev_key_index': None
+        }
+        
+        use_pygame = "Midi Through:Midi Through Port-0 14:0"
+        if config['device'] == use_pygame:
+            print("Mode clavier Pygame activé (Midi Through détecté)")
+            pygame.init()
+            pygame.display.set_mode((1, 1))
+            
+            while not stop_event.is_set():
+                for ev in pygame.event.get():
+                    if ev.type == pygame.QUIT or stop_event.is_set():
+                        stop_event.set()
+                        break
+                    elif ev.type == pygame.KEYDOWN and ev.key in KEYBOARD_MAPPING:
+                        last_times['key_start'][ev.key] = time()
+                        handle_keydown(ev, state, config, synth, history, last_times, log_callback)
+                    elif ev.type == pygame.KEYUP and ev.key in last_times['key_start']:
+                        handle_keyup(ev, state, synth, history, last_times)
+                        
+                # Petite pause pour éviter une consommation CPU excessive
+                pygame.time.wait(10)
+                
+            pygame.quit()
+
+        else:
+            try:
+                midi_port = mido.open_input(config['device']) #type:ignore
+                print(f"MIDI mode actif avec le port : {config['device']}")
+                
+                while not stop_event.is_set():
+                    # Utiliser polling avec timeout pour vérifier stop_event
+                    if midi_port.poll():
+                        msg = midi_port.receive(block=False)
+                        if msg.type == 'note_on' and msg.velocity > 0:
+                            handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
+                        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                            handle_keyup_midi(msg.note, state, synth, history, last_times)
+                    else:
+                        # Petite pause si aucun message MIDI
+                        threading.Event().wait(0.01)  # 10ms
+                        
+                midi_port.close()
+                
+            except (OSError, IOError) as e:
+                if log_callback:
+                    log_callback(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
+                print(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
+
+    except Exception as e:
+        if log_callback:
+            log_callback(f"Erreur dans la boucle d'improvisation: {e}")
+        print(f"Erreur dans la boucle d'improvisation: {e}")
+    
+    finally:
+        # Nettoyage final
         try:
-            midi_port = mido.open_input(config['device']) #type:ignore
-            print(f"✅ MIDI mode actif avec le port : {config['device']}")
-            for msg in midi_port:
-                if stop_event.is_set():
-                    break
-                if msg.type == 'note_on' and msg.velocity > 0:
-                    handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
-                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                    handle_keyup_midi(msg.note, state, synth, history, last_times)
-            midi_port.close()
-        except (OSError, IOError):
-            print(f"❗ Erreur d'ouverture du port MIDI : {config['device']}")
+            if 'synth' in locals():
+                synth.delete()
+            if 'synth_accomp' in locals():
+                synth_accomp.delete()
+            if '_accomp_stop' in globals() and _accomp_stop is not None:
+                _accomp_stop.set()
+        except Exception as e:
+            print(f"Erreur lors du nettoyage: {e}")
+        
+        if log_callback:
+            log_callback("Boucle d'improvisation terminée")
 
-        pygame.quit()
-
-    synth.delete()
-
+def stop_impro_thread():
+    """Arrête le thread d'improvisation en cours."""
+    global _impro_thread, _stop_event, _accomp_stop
+    
+    # Arrêter l'accompagnement si il existe
+    if '_accomp_stop' in globals() and _accomp_stop is not None:
+        _accomp_stop.set()
+    
+    # Arrêter le thread principal d'improvisation
+    if _stop_event is not None:
+        _stop_event.set()
+        if _impro_thread is not None and _impro_thread.is_alive():
+            _impro_thread.join(timeout=2.0)  # Attendre max 2 secondes
 
 def run_impro(config, log_callback=None):
     """Lance (ou relance) la boucle d'improvisation dans un thread daemon.
 
     Args:
         config (dict): Configuration d'improvisation.
+        log_callback: Fonction de callback pour les logs.
     Returns:
         threading.Thread: Le thread en cours d'exécution (daemon).
     """
     global _impro_thread, _stop_event, _accomp_stop
     
-    # On arrête la chord loop
-    if '_accomp_stop' in globals():
-        _accomp_stop.set()
-        del _accomp_stop
+    # Arrêter proprement toute improvisation en cours
+    stop_impro_thread()
         
-    # Arrêter le thread existant si nécessaire
-    if _stop_event is not None:
-        _stop_event.set()
-        if _impro_thread is not None:
-            _impro_thread.join(timeout=1)
-
     # Créer un nouvel event et thread
     _stop_event = threading.Event()
     _impro_thread = threading.Thread(target=improvisation_loop,
