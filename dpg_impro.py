@@ -8,19 +8,23 @@ import pygame
 import threading
 import os
 import json
-from factor_oracle import OracleBuilder, generate_note_oracle
-from midi_processor import MidiSymbolProcessor
-from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key
-from accompaniement import get_pitches_by_chord, chord_loop, make_vlmc_for_chord, transpose_chord_data, play_mp3
-from interval import generate_symbols_intervals, build_interval_table, build_interval_dict
+import pretrained as pt
+from factor_oracle import generate_note_oracle
+from markov import generate_symbol_vlmc, is_white_note
+from accompaniement import chord_loop, play_mp3
 from impro_genie import PianoGenieEngine
 
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
 KEYBOARD_MAPPING = {
-    pygame.K_a: 0, pygame.K_z: 1, pygame.K_e: 2, pygame.K_r: 3, 
-    pygame.K_t: 4, pygame.K_y: 5, pygame.K_u: 6, pygame.K_i: 7,
+    pygame.K_q: 0, pygame.K_s: 2, pygame.K_d: 4, pygame.K_f: 6, 
+    pygame.K_g: 8, pygame.K_h: 10, pygame.K_j: 12, pygame.K_k: 14,
+}
+
+BLACK_KEY_MAPPING = {
+    pygame.K_a: 1, pygame.K_z: 3, pygame.K_e: 5, pygame.K_r: 7,
+    pygame.K_t: 9, pygame.K_y: 11, pygame.K_u: 13, pygame.K_i: 15,
 }
 
 PROGRESSION = ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7", "E7"]
@@ -49,125 +53,6 @@ def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     fs.program_select(0, sfid, 0, preset)
     return fs
 
-def load_corpus(input_path: str) -> List[dict]:
-    """
-    Charge et renvoie la liste des symboles Midi traités.
-    """
-    ext = os.path.splitext(input_path)[1].lower()
-    if ext == '.json':
-        with open(input_path, 'r') as f:
-            symbols = json.load(f)
-        if not isinstance(symbols, list):
-            raise ValueError("JSON must contain a list of symbols")
-    elif ext == ".mid" or ext == ".midi":
-        symbols = MidiSymbolProcessor().process_midi_file(input_path)
-        if not symbols:
-            raise ValueError(f"No symbols generated for {input_path}")
-    elif ext == ".pt":
-        pass
-    else:
-        raise ValueError(f"Extension de corpus non supportée : {ext}")
-    return symbols
-
-def load_symbols(input_path: str, mode: str, markov_order: int, similarity_level: int,  xml_folder: str,
-        progression: List[str], accomp_info) -> Dict[str, Any]:
-    
-    if mode == "Autoencoder":
-        return {
-            'symbols': [],            
-            'model_path': input_path, 
-            'config_path': "piano_genie/cfg.json"
-        }
-    
-    symbols = load_corpus(input_path)
-    result: Dict[str, Any] = {'symbols': symbols}
-    
-    if mode == 'oracle':
-        trans, supp = OracleBuilder.build_oracle(symbols)[::2], OracleBuilder.build_oracle(symbols)[1::2]
-        # Unpack correctly based on similarity level
-        t3, s3, t2, s2, t1, s1 = trans[0], supp[0], trans[1], supp[1], trans[2], supp[2]
-        result['trans_oracle'] = {3: t3, 2: t2, 1: t1}[similarity_level]
-        result['supply'] = {3: s3, 2: s2, 1: s1}[similarity_level]
-
-    if mode == 'markov':
-        vlmc_table = build_vlmc_table(symbols, max_order=markov_order, similarity_level=similarity_level)
-        all_keys = list({symbol_to_key(s) for s in symbols})
-        result['vlmc_table'] = vlmc_table
-        result['notes'] = all_keys
-
-    if mode in ('markov', 'random'):
-        # On recalcule la liste des hauteurs disponibles
-        result['unique_pitches'] = []
-        seen = set()
-        for s in symbols:
-            if s['type'] == 'note':
-                p = s['pitch']
-                if p not in seen:
-                    result['unique_pitches'].append(p)
-                    seen.add(p)
-            elif s['type'] == 'chord':
-                result['unique_pitches'].append(tuple(s['pitch']))
-    if mode == "accompagnement":
-        if accomp_info == "normal":
-            chord_map = get_pitches_by_chord(xml_folder, progression)
-            result['chord_map'] = chord_map
-            
-            # Build VLMC tables normales (sans intervalles)
-            result['vlmcs'] = make_vlmc_for_chord(
-                chord_map,
-                max_order=markov_order,
-                similarity_level=similarity_level,
-                #use_intervals=False  # Explicitement False
-            )
-            
-        elif accomp_info == "by chord type":
-            chord_map = get_pitches_by_chord(xml_folder, progression, group_by_type=True, max_notes_per_chord=600)
-            chord_map = transpose_chord_data(chord_map, PROGRESSION)
-            result['chord_map'] = chord_map
-            
-            # Build VLMC tables normales (sans intervalles)  
-            result['vlmcs'] = make_vlmc_for_chord(
-                chord_map,
-                max_order=markov_order,
-                similarity_level=similarity_level,
-                #use_intervals=False  # Explicitement False
-            )
-            
-        elif accomp_info == "by interval":
-            # 1) récupérer les pitches groupés par type (comme "by chord type")
-            chord_map = get_pitches_by_chord(
-                xml_folder,
-                progression,
-                group_by_type=True,
-                max_notes_per_chord=600
-            )
-            chord_map = transpose_chord_data(chord_map, progression)
-
-            # 2) construire le dictionnaire d'intervalles pour chaque accord
-            #    (build_interval_dict attend chord_map: chord -> list[pitches])
-            interval_dict = build_interval_dict(chord_map)
-
-            # 3) construire la table de transitions d'intervalles (ordre = markov_order)
-            #    build_interval_table prend data: dict->sequences et max_order (ordre de backoff)
-            interval_table = build_interval_table(interval_dict, max_order=markov_order)
-
-            # 4) sauvegarder dans le résultat pour usage ultérieur (génération)
-            result['chord_map'] = chord_map
-            result['interval_dict'] = interval_dict
-            result['interval_table'] = interval_table
-
-            # 5) construire les VLMC en mode "intervalles"
-            #    make_vlmc_for_chord doit accepter use_intervals=True pour construire
-            #    ses modèles en travaillant sur les intervalles plutôt que sur les pitches bruts.
-            result['vlmcs'] = make_vlmc_for_chord(
-                chord_map,
-                max_order=markov_order,
-                similarity_level=similarity_level,
-                use_intervals=True
-            )
-        
-    result['progression'] = progression
-    return result
 
 def normalize_note(note, dur_eff=None, default_velocity=120):
     """
@@ -217,7 +102,19 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         None
     """
     # Calcul du gap
-    idx = KEYBOARD_MAPPING[event.key]
+    if event.key in KEYBOARD_MAPPING:
+        idx = KEYBOARD_MAPPING[event.key]
+        is_black = False
+    elif event.key in BLACK_KEY_MAPPING:
+        idx = BLACK_KEY_MAPPING[event.key]
+        is_black = True
+    else:
+        # key not bound to any mapping -> ignore
+        return 
+    
+    #scale_filter 
+    use_scale_filter = not is_black
+
     prev_idx = last_times['prev_key_index']
     gap = 0 if prev_idx is None else idx - prev_idx
     last_times['prev_key_index'] = idx
@@ -297,7 +194,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             similarity_level   = config['sim_lvl'],
             n_candidates = config['n_candidat'],
             current_chord=chord_name,  
-            use_scale_filter=True
+            use_scale_filter= use_scale_filter
         )
 
         # update that chord's own history
@@ -454,7 +351,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             similarity_level   = config['sim_lvl'],
             n_candidates       = config['n_candidat'],
             current_chord=chord_name, 
-            use_scale_filter=True
+            use_scale_filter=is_white_note(note_index),
         )
 
         # update that chord's own history
@@ -539,7 +436,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         history.append(msg)
 
     try:
-        data = load_symbols(
+        data = pt.load_symbols_cached(
             config['corpus'], config['mode'],
             config.get('markov_order', 1), config.get('sim_lvl', 1), xml_folder, PROGRESSION, config.get("accomp_mod_tag")
         )
@@ -652,7 +549,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     if ev.type == pygame.QUIT or stop_event.is_set():
                         stop_event.set()
                         break
-                    elif ev.type == pygame.KEYDOWN and ev.key in KEYBOARD_MAPPING:
+                    elif ev.type == pygame.KEYDOWN and (ev.key in KEYBOARD_MAPPING or ev.key in BLACK_KEY_MAPPING):
                         last_times['key_start'][ev.key] = time()
                         handle_keydown(ev, state, config, synth, history, last_times, log_callback)
                     elif ev.type == pygame.KEYUP and ev.key in last_times['key_start']:

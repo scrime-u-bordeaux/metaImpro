@@ -27,8 +27,9 @@ test.py
 listening.py
 
 
-#ignore eval folder
+#ignore folder
 /eval
+/cache
 
 #ignore uvconfig
 uv.lock

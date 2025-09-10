@@ -166,6 +166,16 @@ CHORD_TO_SCALE = {
     '+': scale.WholeToneScale,
 }
 
+def is_white_note(index):
+    """
+    Args:
+        index (int): Index de la note MIDI (0-127)
+    Returns:
+        bool
+    """
+    WHITE_SEMITONES = {0, 2, 4, 5, 7, 9, 11}
+    return  (index % 12) in WHITE_SEMITONES
+
 def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
     """
     Filtre les symboles candidats selon la gamme de l'accord courant
@@ -261,6 +271,7 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         print(f"Erreur dans filter_by_scale: {e}")
         return symbols_list, counts  # counts is already a numpy array now
     
+
 def generate_symbol_vlmc(
     previous_symbols: List[Any],
     vlmc_table: Dict[Tuple, Dict[Tuple, int]],
