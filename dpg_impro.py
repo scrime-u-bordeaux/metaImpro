@@ -12,7 +12,7 @@ import pretrained as pt
 from factor_oracle import generate_note_oracle
 from markov import generate_symbol_vlmc, is_white_note
 from accompaniement import chord_loop, play_mp3
-from impro_genie import PianoGenieEngine
+#from impro_genie import PianoGenieEngine
 
 
 log = print # type:ignore
@@ -521,12 +521,12 @@ def improvisation_loop(config, stop_event, log_callback=None):
                 ).start()
 
         elif config["mode"] == "Autoencoder":
-            engine = PianoGenieEngine(
+            """engine = PianoGenieEngine(
                 model_path=data["model_path"],
                 config_path=data["config_path"]
             )
             engine.reset_generation()
-            state["engine"] = engine
+            state["engine"] = engine"""
 
         # Random and Markov need pitches list
         if config['mode'] in ('markov', 'random'):

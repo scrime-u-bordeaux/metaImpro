@@ -77,3 +77,10 @@ Then, in the window:
 
 4. Click Start Jamming
 
+
+## Common errors
+
+If you get an error during the installation, you might have some reccurent problems as :
+you installed the python package fluydsynth instead of pyfluidsynth.
+
+You get this error : ModuleNotFoundError: No module named 'pkg_resources'. It means you may need to reinstall or install your setup-tools.

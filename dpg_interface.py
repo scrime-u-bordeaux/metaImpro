@@ -406,7 +406,6 @@ with dpg.window(label='Sélection du device', width=1500, height=1300):
         dpg.add_combo(
             tag='device_combo',
             items=get_device(),
-            default_value='Midi Through:Midi Through Port-0 14:0',
             width=200
         )
         # Combo pour choisir les morceaux

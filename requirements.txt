@@ -10,3 +10,4 @@ python-rtmidi==1.5.8
 tqdm==4.67.1
 music21==9.7.0
 pretty-midi==0.2.10
+setuptools==80.8.0
