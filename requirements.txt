@@ -9,3 +9,4 @@ pygame==2.6.1
 python-rtmidi==1.5.8
 tqdm==4.67.1
 music21==9.7.0
+pretty-midi==0.2.10
