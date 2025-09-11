@@ -520,7 +520,6 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     daemon=True
                 ).start()
 
-<<<<<<< HEAD
         elif config["mode"] == "Autoencoder":
             """engine = PianoGenieEngine(
                 model_path=data["model_path"],
@@ -528,15 +527,6 @@ def improvisation_loop(config, stop_event, log_callback=None):
             )
             engine.reset_generation()
             state["engine"] = engine"""
-=======
-        # elif config["mode"] == "Autoencoder":
-        #     engine = PianoGenieEngine(
-        #         model_path=data["model_path"],
-        #         config_path=data["config_path"]
-        #     )
-        #     engine.reset_generation()
-        #     state["engine"] = engine
->>>>>>> da5890b (just make it work on mac for now)
 
         # Random and Markov need pitches list
         if config['mode'] in ('markov', 'random'):
