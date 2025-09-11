@@ -35,7 +35,7 @@ xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
 _impro_thread = None
 _stop_event = None
 
-def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
+def init_audio(sf2_path: str, driver: str = "coreaudio", preset: int = 1):
     """
     Initialise FluidSynth avec la SoundFont spécifiée.
 
@@ -519,6 +519,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     daemon=True
                 ).start()
 
+<<<<<<< HEAD
         elif config["mode"] == "Autoencoder":
             """engine = PianoGenieEngine(
                 model_path=data["model_path"],
@@ -526,6 +527,15 @@ def improvisation_loop(config, stop_event, log_callback=None):
             )
             engine.reset_generation()
             state["engine"] = engine"""
+=======
+        # elif config["mode"] == "Autoencoder":
+        #     engine = PianoGenieEngine(
+        #         model_path=data["model_path"],
+        #         config_path=data["config_path"]
+        #     )
+        #     engine.reset_generation()
+        #     state["engine"] = engine
+>>>>>>> da5890b (just make it work on mac for now)
 
         # Random and Markov need pitches list
         if config['mode'] in ('markov', 'random'):
