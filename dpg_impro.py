@@ -89,19 +89,10 @@ def normalize_note(note, dur_eff=None, default_velocity=120):
 def handle_keydown(event, state, config, synth, history, last_times, log_callback=None):
     """
     Gère un événement KEYDOWN pour générer et jouer une note d'improvisation.
-
-    Args:
-        event: pygame KEYDOWN event
-        state: dict, contient prev_state, context, note_buffer, etc.
-        config: dict, configuration d'impro (mode, p, default_velocity)
-        synth: fluidsynth Synth
-        history: list, accumulate logs
-        last_times: dict, gère key_start, last_note_end, last_note_duration, prev_key_index
-
-    Returns:
-        None
+    Updated: uses sym['played_pitch'] for playback (if present) while keeping sym
+    (logical pitch) in the history (Option A).
     """
-    # Calcul du gap
+    # Calcul du gap & mapping
     if event.key in KEYBOARD_MAPPING:
         idx = KEYBOARD_MAPPING[event.key]
         is_black = False
@@ -109,25 +100,27 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         idx = BLACK_KEY_MAPPING[event.key]
         is_black = True
     else:
-        # key not bound to any mapping -> ignore
-        return 
-    
-    #scale_filter 
+        # key not bound -> ignore
+        return
+
+    # scale filter
     use_scale_filter = not is_black
 
-    prev_idx = last_times['prev_key_index']
+    prev_idx = last_times.get('prev_key_index')
     gap = 0 if prev_idx is None else idx - prev_idx
     last_times['prev_key_index'] = idx
 
     # Durée effective
     now = time()
-    if last_times['last_note_end'] is not None and now >= last_times['last_note_end']:
-        silence = now - last_times['last_note_end']
-        dur_eff = last_times['last_note_duration'] + silence
+    if last_times.get('last_note_end') is not None and now >= last_times.get('last_note_end'):
+        silence = now - last_times.get('last_note_end')
+        dur_eff = last_times.get('last_note_duration', 0.0) + silence
     else:
-        dur_eff = last_times['last_note_duration']
+        dur_eff = last_times.get('last_note_duration', 0.0)
 
     # Génération de la note selon mode
+    raw_note = None
+
     if config['mode'] == 'oracle':
         new_state, raw_note, type_link = generate_note_oracle(
             state['prev_state'],
@@ -136,7 +129,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             state['symbols'],
             dur_eff,
             gap,
-            p=config['p'],
+            p=config.get('p', 0.5),
             contour=True
         )
         state['prev_state'] = new_state
@@ -144,63 +137,55 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             log_callback(f"__progress__:{new_state}:{len(state['symbols'])}")
 
     elif config['mode'] == 'markov':
-        # Markov: contexte variable
         sym, next_prob, top_probs = generate_symbol_vlmc(
-        previous_symbols   = state['symbol_history'],
-        vlmc_table         = state['vlmc_table'],
-        max_order          = config['markov_order'],
-        gap                = gap,
-        contour            = True,
-        similarity_level= config['sim_lvl'],
-        n_candidates = config['n_candidat'],
-        current_chord=None,  
-        use_scale_filter=False
+            previous_symbols   = state['symbol_history'],
+            vlmc_table         = state['vlmc_table'],
+            max_order          = config.get('markov_order', 3),
+            gap                = gap,
+            contour            = True,
+            similarity_level   = config.get('sim_lvl', 3),
+            n_candidates       = config.get('n_candidat', 1),
+            current_chord      = None,
+            use_scale_filter   = False
         )
-        # Mise à jour du contexte
+        # Keep logical symbol in history (Option A)
         state['symbol_history'].append(sym)
-        #historique pour display
         state['pitch_history'].append(sym['pitch'])
-        # Conserver uniquement les derniers N selon markov_order
-        if len(state['symbol_history']) > config['markov_order'] + 1:
+        if len(state['symbol_history']) > config.get('markov_order', 3) + 1:
             state['symbol_history'].pop(0)
             state['pitch_history'].pop(0)
         raw_note = sym
 
         if log_callback and top_probs:
             chosen = sym['pitch']
-            choices = [(s['pitch'], p) for s,p in top_probs]
+            choices = [(s['pitch'], p) for s, p in top_probs]
             log_callback(f"__markov_probs__:{chosen}:{choices}:{next_prob}")
-            
+
     elif config['mode'] == 'random':
         rnd = random.choice(state['unique_pitches'])
         raw_note = rnd if isinstance(rnd, list) else [rnd]
-    
+
     elif config["mode"] == "accompagnement":
-        # figure out how many bars have elapsed
-        elapsed = time() - last_times.get('accomp_start', state['accomp_start'])
-        bar_index = int(elapsed / state['bar_dur'])
+        elapsed = time() - last_times.get('accomp_start', state.get('accomp_start', 0.0))
+        bar_index = int(elapsed / state.get('bar_dur', 1.0))
         chord_name = PROGRESSION[bar_index % len(PROGRESSION)]
         print(f"[DEBUG]-{chord_name}")
-        # grab that chord's VLMC table + all_keys
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
-        # generate one symbol (note) from *that* table
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
-            max_order          = config['markov_order'],
+            max_order          = config.get('markov_order', 3),
             gap                = gap,
             contour            = True,
-            similarity_level   = config['sim_lvl'],
-            n_candidates = config['n_candidat'],
-            current_chord=chord_name,  
-            use_scale_filter= use_scale_filter
+            similarity_level   = config.get('sim_lvl', 3),
+            n_candidates       = config.get('n_candidat', 1),
+            current_chord      = chord_name,
+            use_scale_filter   = use_scale_filter
         )
 
-        # update that chord's own history
         state['accomp_history'][chord_name].append(sym)
-        # (optional: keep it bounded by markov_order)
-        if len(state['accomp_history'][chord_name]) > config['markov_order'] + 1:
+        if len(state['accomp_history'][chord_name]) > config.get('markov_order', 3) + 1:
             state['accomp_history'][chord_name].pop(0)
 
         raw_note = sym
@@ -211,16 +196,34 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
 
     elif config['mode'] == 'Autoencoder':
         btn_idx = KEYBOARD_MAPPING[event.key]
-        # génère une note via le décodeur
         midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
         raw_note = [midi_pitch]
-        
+
     # Jouer note ou accord
-    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+    # If raw_note is the symbol dict produced by generate_symbol_vlmc, prefer its 'played_pitch'.
+    if isinstance(raw_note, dict) and 'played_pitch' in raw_note:
+        played = raw_note['played_pitch']
+        if not isinstance(played, (list, tuple)):
+            played = [played]
+        pitches_to_play = [int(max(0, min(127, p))) for p in played]
+        duration = raw_note.get('duration', dur_eff)
+        vel = raw_note.get('velocity', config.get('default_velocity', 100))
+    else:
+        # fallback to existing normalize_note to handle ints/lists/dicts without played_pitch
+        pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+
     for p in pitches_to_play:
-        synth.noteon(0, p, vel)
+        p_clamped = int(max(0, min(127, p)))
+        synth.noteon(0, p_clamped, vel)
+
+    # Store in buffer keyed by the pygame event.key
     state['note_buffer'][event.key] = pitches_to_play
+
+    # mark key start time
+    last_times.setdefault('key_start', {})[event.key] = now
+
     log(f"KD {pygame.key.name(event.key)} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
+
     
 
 
@@ -258,18 +261,7 @@ def handle_keyup(event, state, synth, history, last_times):
 def handle_keydown_midi(note_index, velocity, state, config, synth, history, last_times, log_callback=None):
     """
     Gère un événement note_on MIDI pour générer et jouer une note d'improvisation.
-
-    Args:
-        note_index (int): Index de la note MIDI (0-127)
-        velocity (int): Vélocité MIDI (0-127)
-        state (dict): Contient prev_state, context, note_buffer, etc.
-        config (dict): Configuration d'impro (mode, p, default_velocity)
-        synth (fluidsynth.Synth): Synthétiseur FluidSynth
-        history (list): Accumule les logs
-        last_times (dict): Gère key_start, last_note_end, last_note_duration, prev_key_index
-
-    Returns:
-        None
+    Updated to use sym['played_pitch'] for playback while keeping sym in history (Option A).
     """
     # Calcul du gap
     prev_idx = last_times.get('prev_key_index')
@@ -278,13 +270,14 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     # Durée effective
     now = time()
-    if last_times['last_note_end'] is not None and now >= last_times['last_note_end']:
-        silence = now - last_times['last_note_end']
-        dur_eff = last_times['last_note_duration'] + silence
+    if last_times.get('last_note_end') is not None and now >= last_times.get('last_note_end'):
+        silence = now - last_times.get('last_note_end')
+        dur_eff = last_times.get('last_note_duration', 0.0) + silence
     else:
-        dur_eff = last_times['last_note_duration']
+        dur_eff = last_times.get('last_note_duration', 0.0)
 
-    # Génération de la note selon le mode
+    raw_note = None
+
     if config['mode'] == 'oracle':
         new_state, raw_note, type_link = generate_note_oracle(
             state['prev_state'],
@@ -293,7 +286,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             state['symbols'],
             dur_eff,
             gap,
-            p=config['p'],
+            p=config.get('p', 0.5),
             contour=True
         )
         state['prev_state'] = new_state
@@ -301,24 +294,21 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             log_callback(f"__progress__:{new_state}:{len(state['symbols'])}")
 
     elif config['mode'] == 'markov':
-        # Markov: contexte variable
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['symbol_history'],
             vlmc_table         = state['vlmc_table'],
-            max_order          = config['markov_order'],
+            max_order          = config.get('markov_order', 3),
             gap                = gap,
             contour            = True,
-            similarity_level   = config['sim_lvl'],
-            n_candidates       = config['n_candidat'],
-            current_chord="C7",  # L'accord actuel de votre progression
-            use_scale_filter=True
+            similarity_level   = config.get('sim_lvl', 3),
+            n_candidates       = config.get('n_candidat', 1),
+            current_chord      = "C7",
+            use_scale_filter   = True
         )
-        # Mise à jour du contexte
+        # Keep logical symbol in history (Option A)
         state['symbol_history'].append(sym)
-        # Historique pour display
         state['pitch_history'].append(sym['pitch'])
-        # Conserver uniquement les derniers N selon markov_order
-        if len(state['symbol_history']) > config['markov_order'] + 1:
+        if len(state['symbol_history']) > config.get('markov_order', 3) + 1:
             state['symbol_history'].pop(0)
             state['pitch_history'].pop(0)
         raw_note = sym
@@ -333,31 +323,26 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         raw_note = rnd if isinstance(rnd, list) else [rnd]
 
     elif config["mode"] == "accompagnement":
-        # figure out how many bars have elapsed
-        elapsed = time() - last_times.get('accomp_start', state['accomp_start'])
-        bar_index = int(elapsed / state['bar_dur'])
+        elapsed = time() - last_times.get('accomp_start', state.get('accomp_start', 0.0))
+        bar_index = int(elapsed / state.get('bar_dur', 1.0))
         chord_name = PROGRESSION[bar_index % len(PROGRESSION)]
         print(f"[DEBUG]-{chord_name}")
-        # grab that chord's VLMC table + all_keys
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
-        # generate one symbol (note) from *that* table
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
-            max_order          = config['markov_order'],
+            max_order          = config.get('markov_order', 3),
             gap                = gap,
             contour            = True,
-            similarity_level   = config['sim_lvl'],
-            n_candidates       = config['n_candidat'],
-            current_chord=chord_name, 
-            use_scale_filter=is_white_note(note_index),
+            similarity_level   = config.get('sim_lvl', 3),
+            n_candidates       = config.get('n_candidat', 1),
+            current_chord      = chord_name,
+            use_scale_filter   = is_white_note(note_index),
         )
 
-        # update that chord's own history
         state['accomp_history'][chord_name].append(sym)
-        # (optional: keep it bounded by markov_order)
-        if len(state['accomp_history'][chord_name]) > config['markov_order'] + 1:
+        if len(state['accomp_history'][chord_name]) > config.get('markov_order', 3) + 1:
             state['accomp_history'][chord_name].pop(0)
 
         raw_note = sym
@@ -367,27 +352,37 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             log_callback(f"__markov_probs__:{sym['pitch']}:{choices}:{next_prob}")
 
     elif config['mode'] == 'Autoencoder':
-        btn_idx = note_index  # Use note_index directly as button index
-        # génère une note via le décodeur
+        btn_idx = note_index
         midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
-        raw_note = [midi_pitch]  # Wrap in list to match expected format
+        raw_note = [midi_pitch]
 
     # Jouer note ou accord
-    pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
-    # Use the MIDI velocity instead of the one from normalize_note
-    vel = velocity
+    # Prefer sym['played_pitch'] if available; otherwise fall back to normalize_note
+    if isinstance(raw_note, dict) and 'played_pitch' in raw_note:
+        played = raw_note['played_pitch']
+        if not isinstance(played, (list, tuple)):
+            played = [played]
+        pitches_to_play = [int(max(0, min(127, p))) for p in played]
+        duration = raw_note.get('duration', dur_eff)
+        vel = raw_note.get('velocity', config.get('default_velocity', 100))
+        # But per MIDI handler requirements, use the incoming MIDI velocity
+        vel = velocity
+    else:
+        pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+        vel = velocity  # override with actual MIDI velocity
+
     for p in pitches_to_play:
-        synth.noteon(0, p, vel)
-    
+        p_clamped = int(max(0, min(127, p)))
+        synth.noteon(0, p_clamped, vel)
+
     # Store pitches in note_buffer using note_index as key
     state['note_buffer'][note_index] = pitches_to_play
-    
+
     # Initialize key_start dict if it doesn't exist
-    if 'key_start' not in last_times:
-        last_times['key_start'] = {}
-    last_times['key_start'][note_index] = now
-    
+    last_times.setdefault('key_start', {})[note_index] = now
+
     log(f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
+
 
 def handle_keyup_midi(note_index, state, synth, history, last_times):
     """
@@ -566,7 +561,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                 print(f"MIDI mode actif avec le port : {config['device']}")
                 print("bonjour")
                 while not stop_event.is_set():
-                    for msg in midi_port:
+                    for msg in midi_port.iter_pending():
                     # Utiliser polling avec timeout pour vérifier stop_event
                         if msg.type == 'note_on' and msg.velocity > 0:                                                        
                             handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)

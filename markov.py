@@ -285,43 +285,39 @@ def generate_symbol_vlmc(
 ) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
     Génère le symbole suivant via VLMC avec logique de contour mélodique.
-    La première note (fallback) est tirée selon la distribution marginale observée.
-
-    Args:
-        n_candidates: nombre de candidats à considérer pour le tirage.
-                      1 -> prend toujours le max;
-                      2 -> tirage aléatoire uniforme parmi les deux plus probables;
-                      etc.
+    Retour:
+       sym (dict) avec champs standards + 'octave_shift' et 'played_pitch'
+       prob (float)
+       top_probs: list of (symbol_dict, prob) for up to 4 top candidates (base symbols, NOT played_pitch)
+    Option A behaviour: history keeps the base untransposed pitch; octave transposition applies to playback only.
     """
+    # helpers
+    def pick_from_probs(keys, probs):
+        # return index into keys/probs (int)
+        order_idx = np.argsort(probs)[::-1]
+        top_k = min(n_candidates, len(keys))
+        candidates_idx = order_idx[:top_k]
+        chosen_idx = int(np.random.choice(candidates_idx))
+        return chosen_idx
+
     # 1) Préparer l’historique
     full_history = [symbol_to_key(s) for s in previous_symbols]
     trunc_history = [truncate_key(k, similarity_level) for k in full_history]
     context = tuple(trunc_history[-max_order:]) if trunc_history else ()
 
-    # Fonction interne pour tirer selon top n_candidates
-    def pick_from_probs(keys, probs):
-        # indices triés par prob décroissante
-        order_idx = np.argsort(probs)[::-1]
-        top_k = min(n_candidates, len(keys))
-        candidates_idx = order_idx[:top_k]
-        # tirage uniforme parmi ces candidats
-        chosen = np.random.choice(candidates_idx)
-        return chosen
-
-    # 2) Back‑off : chercher le plus long suffixe du contexte
+    # 2) Back-off : chercher le plus long suffixe du contexte
     for order in range(len(context), 0, -1):
         sub = context[-order:]
         if sub in vlmc_table:
             dist = vlmc_table[sub]
-            print(dist)
             # DEBUG
+            print(dist)
             print(f"[DEBUG] Context {sub!r} has {len(dist)} successors:")
-            for k, c in dist.items():
-                print("   ", k, "→", c)
+            for k, c in dist.items(): print("   ", k, "→", c)
             break
     else:
-        # Fallback marginal
-        print(f"[DEBUG-L{similarity_level}] Pas de successeurs  à  {context!r}")
+        # Fallback marginal (no context found)
+        print(f"[DEBUG-L{similarity_level}] Pas de successeurs à {context!r}")
         marg_counts: Dict[Tuple, float] = defaultdict(float)
         for sub_dist in vlmc_table.values():
             for key_, cnt in sub_dist.items():
@@ -332,32 +328,61 @@ def generate_symbol_vlmc(
         idx = pick_from_probs(keys, probs)
         chosen_key = keys[idx]
         sym = key_to_symbol(chosen_key)
+        # add octave_shift=0 / played_pitch = base pitch(s)
+        if sym['type'] == 'note':
+            sym['octave_shift'] = 0
+            sym['played_pitch'] = int(max(0, min(127, int(sym['pitch']))))
+        else:
+            sym['octave_shift'] = 0
+            sym['played_pitch'] = [int(max(0, min(127, int(p)))) for p in sym['pitch']]
         prob = float(probs[idx])
         top_idx = np.argsort(probs)[::-1][:min(4, len(keys))]
         top_probs = [(key_to_symbol(keys[i]), float(probs[i])) for i in top_idx]
         return sym, prob, top_probs
 
-    # 3) Successeurs du contexte
-    symbols_list = list(dist.keys())
+    # 3) Successeurs du contexte (original dist)
+    symbols_list = list(dist.keys())             # keys are tuple-keys (hashable)
     counts = np.array([dist[k] for k in symbols_list], dtype=float)
 
-    # 4) Filtrage de contour
+    # Save the pre-filter copies for diagnostics / possible fallback logic
+    prefilter_symbols = list(symbols_list)
+    prefilter_counts = counts.copy()
+
+    # 4) Filtrage de contour (directional)
+    forced_octave_shift = 0
     if contour and previous_symbols:
         last_key = symbol_to_key(previous_symbols[-1])
         prev_pitch = last_key[1] if last_key[0] == "note" else last_key[1][0]
         flat = np.array([(k[1] if k[0] == "note" else k[1][0]) for k in symbols_list], dtype=float)
-        mask = (flat > prev_pitch) if gap > 0 else (flat < prev_pitch) if gap < 0 else np.ones(len(symbols_list), bool)
-        if mask.any():
-            symbols_list = [s for s, m in zip(symbols_list, mask) if m]
-            counts = np.array([dist[s] for s in symbols_list], dtype=float)
 
-    # Filtrage des notes out
+        if gap > 0:
+            desired_mask = (flat > prev_pitch)
+        elif gap < 0:
+            desired_mask = (flat < prev_pitch)
+        else:
+            desired_mask = np.ones(len(symbols_list), bool)
+
+        if desired_mask.any():
+            # keep only successors in the desired direction
+            symbols_list = [s for s, m in zip(symbols_list, desired_mask) if m]
+            counts = np.array([dist[s] for s in symbols_list], dtype=float)
+            forced_octave_shift = 0
+        else:
+            # There were successors but none in the desired direction:
+            # choose among successors as usual, but mark that playback must be transposed ±12
+            forced_octave_shift = 1 if gap > 0 else (-1 if gap < 0 else 0)
+            # keep symbols_list and counts as the original successors (do not filter them out)
+            symbols_list = list(prefilter_symbols)
+            counts = prefilter_counts.copy()
+
+    # 5) Filtrage des notes out (scale filter)
     if use_scale_filter and current_chord:
         symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord, True)
 
-    # 5) Fallback marginal si vide
+    # 6) Fallback marginal si vide (après filtres)
     if len(symbols_list) == 0 or counts.sum() == 0:
-        print(f"[DEBUG-L{similarity_level}] fallback marginal après filtrage pour contexte {context!r}")
+        # If we previously detected forced_octave_shift but all candidates were removed by scale filter,
+        # we keep existing fallback behaviour (marginal distribution).
         marg_counts: Dict[Tuple, float] = defaultdict(float)
         for sub_dist in vlmc_table.values():
             for key_, cnt in sub_dist.items():
@@ -368,12 +393,17 @@ def generate_symbol_vlmc(
         idx = pick_from_probs(keys, probs)
         chosen_key = keys[idx]
         sym = key_to_symbol(chosen_key)
+        sym['octave_shift'] = 0
+        if sym['type'] == 'note':
+            sym['played_pitch'] = int(max(0, min(127, int(sym['pitch']))))
+        else:
+            sym['played_pitch'] = [int(max(0, min(127, int(p)))) for p in sym['pitch']]
         prob = float(probs[idx])
         top_idx = np.argsort(probs)[::-1][:min(4, len(keys))]
         top_probs = [(key_to_symbol(keys[i]), float(probs[i])) for i in top_idx]
         return sym, prob, top_probs
 
-    # 6) Probabilités normales
+    # 7) Probabilités normales et tirage
     probs = counts / counts.sum()
     idx = pick_from_probs(symbols_list, probs)
     chosen_key = symbols_list[idx]
@@ -382,5 +412,19 @@ def generate_symbol_vlmc(
     top_idx = np.argsort(probs)[::-1][:min(4, len(symbols_list))]
     top_probs = [(key_to_symbol(symbols_list[i]), float(probs[i])) for i in top_idx]
 
-    return sym, prob, top_probs
+    # 8) Compute played_pitch according to forced_octave_shift (playback-only)
+    octave_shift = forced_octave_shift  # -1, 0 or +1
+    if sym['type'] == 'note':
+        base = int(sym['pitch'])
+        played = base + 12 * octave_shift
+        # clamp to MIDI range
+        played = max(0, min(127, played))
+        sym['octave_shift'] = octave_shift
+        sym['played_pitch'] = int(played)
+    else:
+        base_list = [int(p) for p in sym['pitch']]
+        played_list = [max(0, min(127, p + 12 * octave_shift)) for p in base_list]
+        sym['octave_shift'] = octave_shift
+        sym['played_pitch'] = played_list
 
+    return sym, prob, top_probs

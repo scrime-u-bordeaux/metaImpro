@@ -1,10 +1,9 @@
 from music21 import * # type:ignore
-from typing import List, Dict, Optional, Set, Callable
+from typing import List, Dict, Optional, Callable
 from time import sleep
-from markov import build_vlmc_table, generate_symbol_vlmc, symbol_to_key, truncate_key
+from markov import build_vlmc_table, symbol_to_key, truncate_key
 import os
 import re
-import numpy as np
 import pygame
 import time
 import threading
