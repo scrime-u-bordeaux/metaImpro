@@ -1,4 +1,4 @@
-from time import time
+from time import time, sleep
 import mido
 import fluidsynth
 import random
@@ -35,7 +35,7 @@ xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
 _impro_thread = None
 _stop_event = None
 
-def init_audio(sf2_path: str, driver: str = "coreaudio", preset: int = 1):
+def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     """
     Initialise FluidSynth avec la SoundFont spécifiée.
 
@@ -48,6 +48,7 @@ def init_audio(sf2_path: str, driver: str = "coreaudio", preset: int = 1):
         fluidsynth.Synth: L'objet Synth initialisé et prêt à jouer.
     """
     fs = fluidsynth.Synth()
+
     fs.start(driver=driver)
     sfid = fs.sfload(sf2_path)
     fs.program_select(0, sfid, 0, preset)
@@ -269,7 +270,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         last_times (dict): Gère key_start, last_note_end, last_note_duration, prev_key_index
 
     Returns:
-        None
+        list[mido.Message] : liste de messages MIDI de type note_on
     """
     # Calcul du gap
     prev_idx = last_times.get('prev_key_index')
@@ -376,9 +377,12 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
     # Use the MIDI velocity instead of the one from normalize_note
     vel = velocity
-    for p in pitches_to_play:
-        synth.noteon(0, p, vel)
-    
+    out_msgs = []
+
+    if pitches_to_play is not None:
+        for p in pitches_to_play:
+            out_msgs.append(mido.Message('note_on', note=p, velocity=vel, channel=0))
+            
     # Store pitches in note_buffer using note_index as key
     state['note_buffer'][note_index] = pitches_to_play
     
@@ -388,6 +392,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     last_times['key_start'][note_index] = now
     
     log(f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
+
+    return out_msgs
 
 def handle_keyup_midi(note_index, state, synth, history, last_times):
     """
@@ -401,20 +407,21 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
         last_times (dict): Gère key_start, last_note_end, last_note_duration
 
     Returns:
-        None
+        list[mido.Message] : liste de messages MIDI de type note_off
     """
     # Vérifier si la note était en cours
     start_time = last_times['key_start'].get(note_index)
     if start_time is None:
-        return  # Ignorer si aucune note_on correspondante
+        return [] # Ignorer si aucune note_on correspondante
 
     # Durée réelle
     dur = time() - start_time
     # Récupérer le pitch et arrêter le son
     pitches = state['note_buffer'].pop(note_index, None)
-    if pitches is not None:
-        for p in pitches:
-            synth.noteoff(0, p)
+    out_msgs = []
+
+    for p in pitches:
+        out_msgs.append(mido.Message('note_off', note=p, velocity=0, channel=0))
     info = f"KU MIDI note {note_index} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
@@ -423,6 +430,8 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     last_times['last_note_duration'] = dur
     # Retirer le start
     del last_times['key_start'][note_index]
+
+    return out_msgs
 
 def improvisation_loop(config, stop_event, log_callback=None):
     """Boucle principale d'improvisation avec gestion d'arrêt améliorée."""
@@ -452,9 +461,13 @@ def improvisation_loop(config, stop_event, log_callback=None):
             'note_buffer':   {}
         }
 
-        synth = init_audio(config['sf2_path'])
+        synth = init_audio(config['sf2_path'], config['audio_driver'])
         random_preset = [0, 11, 12, 16, 18]
-        synth_accomp = init_audio(config['sf2_path'], preset=random.choice(random_preset))
+        synth_accomp = init_audio(
+            config['sf2_path'],
+            config['audio_driver'],
+            preset=random.choice(random_preset)
+        )
 
         # Attach mode-specific data
         if config['mode'] == 'oracle':
@@ -539,7 +552,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         }
         
         use_pygame = "Midi Through:Midi Through Port-0 14:0"
-        if config['device'] == use_pygame:
+        if config['device_in'] == use_pygame:
             print("Mode clavier Pygame activé (Midi Through détecté)")
             pygame.init()
             pygame.display.set_mode((1, 1))
@@ -562,26 +575,70 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         else:
             try:
-                midi_port = mido.open_input(config['device']) #type:ignore
-                print(f"MIDI mode actif avec le port : {config['device']}")
-                print("bonjour")
+                midi_in_port_name = config['device_in']
+                midi_in_port = mido.open_input(midi_in_port_name) #type:ignore
+                print(f"MIDI mode actif avec le port d'entrée : {midi_in_port_name}")
+
+                midi_out_enabled = True
+                midi_out_port_name = config['device_out']
+                if midi_out_port_name == 'None':
+                    midi_out_enabled = False
+                elif midi_in_port_name == midi_out_port_name:
+                    print('Boucle MIDI détectée, sortie MIDI désactivée')
+                    midi_out_enabled = False
+                else:
+                    midi_out_port = mido.open_output(midi_out_port_name)
+
                 while not stop_event.is_set():
-                    for msg in midi_port:
-                    # Utiliser polling avec timeout pour vérifier stop_event
+                    sleep(0.01) # is this useful ?
+
+                    generated_midi_events = []
+
+                     # iter_pending was necessary
+                     # without it no way to break out from the loop !
+                    for msg in midi_in_port.iter_pending():
+
                         if msg.type == 'note_on' and msg.velocity > 0:                                                        
-                            handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
+                            generated_midi_events = handle_keydown_midi(
+                                msg.note, msg.velocity,
+                                state,
+                                config,
+                                synth,
+                                history,
+                                last_times,
+                                log_callback,
+                            )
                         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
-                            handle_keyup_midi(msg.note, state, synth, history, last_times)
-                        else:
-                            # Petite pause si aucun message MIDI
-                            threading.Event().wait(0.01)  # 10ms
-                        
-                midi_port.close()
+                            generated_midi_events = handle_keyup_midi(
+                                msg.note,
+                                state,
+                                synth,
+                                history,
+                                last_times,
+                            )
+
+                    for msg in generated_midi_events:
+                        if midi_out_enabled:
+                            midi_out_port.send(msg)
+                        if config['sf_enable']:
+                            if msg.type == 'note_on':
+                                synth.noteon(0, msg.note, msg.velocity)
+                            elif msg.type == 'note_off':
+                                synth.noteoff(0, msg.note)
+
+                print('closing MIDI ports')
+                try:
+                    midi_in_port.close()
+                    midi_out_port.close()
+                except:
+                    # some port couldn't be closed, much probably because they
+                    # were never open, so continue silently
+                    pass
                 
             except (OSError, IOError) as e:
                 if log_callback:
-                    log_callback(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
-                print(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
+                    log_callback(f"Erreur d'ouverture du port MIDI : {config['device_in']} - {e}")
+                print(f"Erreur d'ouverture du port MIDI : {config['device_in']} - {e}")
 
     except Exception as e:
         if log_callback:
