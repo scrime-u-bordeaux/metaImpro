@@ -357,6 +357,7 @@ def on_launch(sender, app_data):
     }
 
     chosen = dpg.get_value('corpus_combo')
+    print(chosen)
     if model == 'oracle':
         cfg['p'] = float(dpg.get_value('oracle_slider_p'))
         cfg['sim_lvl'] = int(dpg.get_value('similarity_combo'))

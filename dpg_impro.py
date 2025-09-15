@@ -479,6 +479,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         if config['mode'] == 'oracle':
             state['trans_oracle'] = data['trans_oracle']
             state['supply'] = data['supply']
+            
         elif config['mode'] == 'markov':
             state['vlmc_table'] = data['vlmc_table']
             state['notes'] = data['notes']
