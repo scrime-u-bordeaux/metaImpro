@@ -587,7 +587,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     print('Boucle MIDI détectée, sortie MIDI désactivée')
                     midi_out_enabled = False
                 else:
-                    midi_out_port = mido.open_output(midi_out_port_name)
+                    midi_out_port = mido.open_output(midi_out_port_name) #type:ignore
 
                 while not stop_event.is_set():
                     sleep(0.01) # is this useful ?
