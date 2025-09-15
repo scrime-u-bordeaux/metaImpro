@@ -598,6 +598,10 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
                 while not stop_event.is_set():
                     # sleep(0.01) # is this useful ?
+<<<<<<< HEAD
+=======
+
+>>>>>>> 80cd0c4 (leave threading.Event().wait(0.01))
                     generated_midi_events = []
 
                      # iter_pending was necessary
@@ -623,8 +627,13 @@ def improvisation_loop(config, stop_event, log_callback=None):
                                 last_times,
                             )
                         else:
+<<<<<<< HEAD
                             threading.Thread().wait(0.01)
 
+=======
+                            threading.Event().wait(0.01)
+                            
+>>>>>>> 80cd0c4 (leave threading.Event().wait(0.01))
                     for msg in generated_midi_events:
                         if midi_out_enabled:
                             midi_out_port.send(msg)
