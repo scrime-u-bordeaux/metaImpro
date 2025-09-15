@@ -271,6 +271,99 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         print(f"Erreur dans filter_by_scale: {e}")
         return symbols_list, counts  # counts is already a numpy array now
     
+def filter_out_of_scale(symbols_list, counts, current_chord, strict_mode=False):
+    """
+    NEW FUNCTION: Filtre les symboles candidats pour garder seulement ceux HORS de la gamme
+    
+    Args:
+        symbols_list: Liste des clés (tuples) candidates du VLMC
+        counts: Array numpy des comptages correspondants
+        current_chord: Accord courant (ex: "C7", "Fm7")
+        strict_mode: Si True, rejette les accords avec des notes dans la gamme
+                    Si False, accepte les accords avec au moins une note hors gamme
+    Returns:
+        (filtered_symbols, filtered_counts): Listes filtrées
+    """
+    if not current_chord:
+        return symbols_list, counts
+    
+    # Filtrer les None dès le début
+    valid_pairs = [(symbol, count) for symbol, count in zip(symbols_list, counts) if symbol is not None]
+    if not valid_pairs:
+        return symbols_list, counts
+    
+    symbols_list, counts = zip(*valid_pairs)
+    symbols_list, counts = list(symbols_list), np.array(counts, dtype=float)
+    
+    try:
+        # Parser l'accord pour extraire root et type (same as filter_by_scale)
+        CHORD_ROOT_RE = re.compile(r'^([A-Ga-g][#b]?)(.*)$')
+        figure = current_chord.split('/')[0].strip()
+        m = CHORD_ROOT_RE.match(figure)
+        if not m:
+            return symbols_list, counts
+            
+        root, chord_type = m.group(1), m.group(2).strip()
+        
+        # Récupérer la classe de gamme
+        scale_class = CHORD_TO_SCALE.get(chord_type)
+        if not scale_class:
+            # Type d'accord inconnu, on ne filtre pas
+            return symbols_list, counts
+        
+        # Créer la gamme
+        root_pitch = pitch.Pitch(root)
+        chord_scale = scale_class(root_pitch)
+        
+        # Générer les classes de hauteur de la gamme (0-11)
+        scale_pitch_classes = set()
+        for degree in range(1, 8):
+            try:
+                scale_pitch = chord_scale.pitchFromDegree(degree)
+                scale_pitch_classes.add(scale_pitch.midi % 12)
+            except:
+                continue
+        
+        # Filtrer les symboles pour garder seulement ceux HORS de la gamme
+        filtered_symbols = []
+        filtered_counts = []
+        
+        for symbol_key, count in zip(symbols_list, counts):
+            if symbol_key is None:
+                continue
+                
+            keep_symbol = False
+            
+            if symbol_key[0] == "note":
+                # Note simple - garder si HORS de la gamme
+                pitch_class = symbol_key[1] % 12
+                if pitch_class not in scale_pitch_classes:
+                    keep_symbol = True
+            elif symbol_key[0] == "chord":
+                # Accord
+                pitches = symbol_key[1]
+                out_of_scale_count = sum(1 for p in pitches if (p % 12) not in scale_pitch_classes)
+                
+                if strict_mode:
+                    # Toutes les notes doivent être hors gamme
+                    keep_symbol = (out_of_scale_count == len(pitches))
+                else:
+                    # Au moins une note doit être hors gamme
+                    keep_symbol = (out_of_scale_count > 0)
+            
+            if keep_symbol:
+                filtered_symbols.append(symbol_key)
+                filtered_counts.append(count)
+        
+        # Si aucun symbole ne passe le filtre, retourner les originaux
+        if not filtered_symbols:
+            return symbols_list, counts
+            
+        return filtered_symbols, np.array(filtered_counts, dtype=float)
+        
+    except Exception as e:
+        print(f"Erreur dans filter_out_of_scale: {e}")
+        return symbols_list, counts
 
 def generate_symbol_vlmc(
     previous_symbols: List[Any],
@@ -281,7 +374,8 @@ def generate_symbol_vlmc(
     similarity_level: int = 3,
     n_candidates: int = 1,
     current_chord = None,
-    use_scale_filter: bool = True
+    use_scale_filter: bool = True,
+    force_out_of_scale: bool = False
 ) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
     Génère le symbole suivant via VLMC avec logique de contour mélodique.
@@ -376,8 +470,13 @@ def generate_symbol_vlmc(
             counts = prefilter_counts.copy()
 
     # 5) Filtrage des notes out (scale filter)
-    if use_scale_filter and current_chord:
-        symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord, True)
+    if current_chord and (use_scale_filter or force_out_of_scale):
+        if force_out_of_scale:
+            # For black keys: filter to keep only OUT-of-scale notes
+            symbols_list, counts = filter_out_of_scale(symbols_list, counts, current_chord)
+        else:
+            # For white keys: filter to keep only IN-scale notes (original behavior)
+            symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord, True)
 
     # 6) Fallback marginal si vide (après filtres)
     if len(symbols_list) == 0 or counts.sum() == 0:

@@ -181,7 +181,8 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             similarity_level   = config.get('sim_lvl', 3),
             n_candidates       = config.get('n_candidat', 1),
             current_chord      = chord_name,
-            use_scale_filter   = use_scale_filter
+            use_scale_filter   = use_scale_filter,
+            force_out_of_scale = not use_scale_filter,
         )
 
         state['accomp_history'][chord_name].append(sym)
@@ -329,6 +330,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         print(f"[DEBUG]-{chord_name}")
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
+        is_white_key = is_white_note(note_index)
+
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
@@ -338,7 +341,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             similarity_level   = config.get('sim_lvl', 3),
             n_candidates       = config.get('n_candidat', 1),
             current_chord      = chord_name,
-            use_scale_filter   = is_white_note(note_index),
+            use_scale_filter   = is_white_key,
+            force_out_of_scale = not is_white_key,
         )
 
         state['accomp_history'][chord_name].append(sym)
