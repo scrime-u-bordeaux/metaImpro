@@ -6,6 +6,7 @@ import ast
 import json
 import re
 import random
+import fluidsynth
 
 model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
 is_impro_running = False
@@ -21,8 +22,11 @@ EXT = ".json"
 note_history = []
 prob_history = []
 
-def get_device():
+def get_input_devices():
     return mido.get_input_names() #type:ignore
+
+def get_output_devices():
+    return mido.get_output_names()  #type:ignore
 
 def get_corpus():
     """
@@ -320,12 +324,16 @@ def on_launch(sender, app_data):
     if model == 'Autoencoder':
         lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
 
-    lignes.append(f"Device MIDI : {dpg.get_value('device_combo')}")
+    lignes.append(f"Device entrée MIDI : {dpg.get_value('device_in_combo')}")
+    lignes.append(f"Device sortie MIDI : {dpg.get_value('device_out_combo')}")
+    lignes.append(f"Driver audio : {dpg.get_value('audio_combo')}")
     dpg.set_value('summary_text', ", ".join(lignes))
 
     cfg = {
         'mode': model,
-        'device': dpg.get_value('device_combo'),
+        'device_in': dpg.get_value('device_in_combo'),
+        'device_out': dpg.get_value('device_out_combo'),
+        'audio_driver': dpg.get_value('audio_combo'),
         'sf2_path': 'Roland_SC-88.sf2',
         'p': None,
         'markov_order': None,
@@ -395,28 +403,96 @@ def on_exit():
         mode = dpg.get_value('model_combo')
         save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
 
+def get_available_audio_drivers():
+    fs = fluidsynth.Synth()
+    fs.start()
+    all_known_audio_drivers = [
+        'pulseaudio',
+        'alsa',
+        'coreaudio',
+        'dart',
+        'dsound',
+        'file',
+        'jack',
+        'oboe',
+        'opensles',
+        'oss',
+        'portaudio',
+        'sdl3',
+        'sndman',
+        'wasapi',
+        'waveout',
+    ]
+    available_audio_drivers = []
+    for option in all_known_audio_drivers:
+        value = fs.get_setting('audio.{0}.device'.format(option))
+        if not value is None:
+            available_audio_drivers.append(option)
+    fs.delete()
+    return available_audio_drivers
 
 dpg.create_context()
 
-with dpg.window(label='Sélection du device', width=1500, height=1300):
-    dpg.add_text("Choisissez un device")
+with dpg.window(
+    # label='Sélection du device',
+    label='MetaImpro',
+    no_collapse=True,
+    no_close=True,
+    width=1500,
+    height=1300
+    ):
     with dpg.group(horizontal=True):
+        with dpg.group():
+            dpg.add_text("Périphérique d'entrée MIDI")
+            # Combo pour les ports
+            input_devices = get_input_devices()
+            default_input_device = None
+            if len(input_devices) > 0:
+                default_input_device = input_devices[0]
+            dpg.add_combo(
+                tag='device_in_combo',
+                items=input_devices,
+                default_value=default_input_device, #type:ignore
+                width=200
+            )
+        with dpg.group():
+          dpg.add_text('Périphérique de sortie MIDI')
+          # Combo pour les ports
+          output_devices = get_output_devices()
+          default_output_device = None
+          if len(output_devices) > 0:
+              default_output_device = output_devices[0]
+          dpg.add_combo(
+              tag='device_out_combo',
+              items=output_devices,
+              default_value=default_output_device, #type:ignore
+              width=200
+          )
 
-        # Combo pour les ports
-        dpg.add_combo(
-            tag='device_combo',
-            items=get_device(),
-            width=200
-        )
-        # Combo pour choisir les morceaux
-        dpg.add_combo(
-            tag='corpus_combo',
-            items=get_corpus(),
-            default_value='lune_1.mid',
-            label='Choisissez un morceau',
-            width=200
-        )
+        with dpg.group():
+            dpg.add_text('Pilote audio')
+            # Combo pour les ports
+            audio_drivers = get_available_audio_drivers()
+            default_audio_driver = None
+            if len(audio_drivers) > 0:
+                default_audio_driver = audio_drivers[0]
+            dpg.add_combo(
+                tag='audio_combo',
+                items=audio_drivers,
+                default_value=default_audio_driver, #type:ignore
+                width=200
+            )
 
+        with dpg.group():
+          dpg.add_text(default_value='Fichier MIDI', tag='corpus_combo_text')
+          # Combo pour choisir les morceaux
+          dpg.add_combo(
+              tag='corpus_combo',
+              items=get_corpus(),
+              default_value='lune_1.mid',
+              # label='Choisissez un morceau',
+              width=200
+          )
     dpg.add_spacer(height=10)
 
     dpg.add_text('Choisissez un modèle')

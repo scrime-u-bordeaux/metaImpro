@@ -451,9 +451,9 @@ def improvisation_loop(config, stop_event, log_callback=None):
             'note_buffer':   {}
         }
 
-        synth = init_audio(config['sf2_path'])
+        synth = init_audio(config['sf2_path'], config['audio_driver'])
         random_preset = [0, 11, 12, 16, 18]
-        synth_accomp = init_audio(config['sf2_path'], preset=random.choice(random_preset))
+        synth_accomp = init_audio(config['sf2_path'], config['audio_driver'],preset=random.choice(random_preset))
 
         # Attach mode-specific data
         if config['mode'] == 'oracle':
@@ -538,7 +538,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         }
         
         use_pygame = "Midi Through:Midi Through Port-0 14:0"
-        if config['device'] == use_pygame:
+        if config['device_in'] == use_pygame:
             print("Mode clavier Pygame activé (Midi Through détecté)")
             pygame.init()
             pygame.display.set_mode((1, 1))
@@ -561,8 +561,8 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         else:
             try:
-                midi_port = mido.open_input(config['device']) #type:ignore
-                print(f"MIDI mode actif avec le port : {config['device']}")
+                midi_port = mido.open_input(config['device_in']) #type:ignore
+                print(f"MIDI mode actif avec le port : {config['device_in']}")
                 print("bonjour")
                 while not stop_event.is_set():
                     for msg in midi_port.iter_pending():
@@ -579,8 +579,8 @@ def improvisation_loop(config, stop_event, log_callback=None):
                 
             except (OSError, IOError) as e:
                 if log_callback:
-                    log_callback(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
-                print(f"Erreur d'ouverture du port MIDI : {config['device']} - {e}")
+                    log_callback(f"Erreur d'ouverture du port MIDI : {config['device_in']} - {e}")
+                print(f"Erreur d'ouverture du port MIDI : {config['device_in']} - {e}")
 
     except Exception as e:
         if log_callback:
