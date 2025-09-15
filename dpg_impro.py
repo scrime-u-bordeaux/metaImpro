@@ -473,7 +473,11 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         synth = init_audio(config['sf2_path'], config['audio_driver'])
         random_preset = [0, 11, 12, 16, 18]
-        synth_accomp = init_audio(config['sf2_path'], config['audio_driver'],preset=random.choice(random_preset))
+        synth_accomp = init_audio(
+            config['sf2_path'],
+            config['audio_driver'],
+            preset=random.choice(random_preset)
+        )
 
         # Attach mode-specific data
         if config['mode'] == 'oracle':
