@@ -558,7 +558,7 @@ with dpg.window(
         dpg.add_checkbox(
             tag='backtrack_checkbox',
             label='backtrack/soundfont',
-            default_value=False,  # False corresponds to unchecked (was 'False' string)
+            default_value=True,  # False corresponds to unchecked (was 'False' string)
             show=False
         )
         # On cache les sliders au démarrage

@@ -221,14 +221,27 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         chord_scale = scale_class(root_pitch)
         
         # Générer les classes de hauteur de la gamme (0-11)
+        scale_notes = []
         scale_pitch_classes = set()
         for degree in range(1, 8):
             try:
                 scale_pitch = chord_scale.pitchFromDegree(degree)
+                note_name = scale_pitch.name
+                scale_notes.append(note_name)
                 scale_pitch_classes.add(scale_pitch.midi % 12)
             except:
                 continue
         
+        
+        # Afficher les informations
+        scale_name = scale_class.__name__.replace('Scale', '')
+        print(f"\n=== GAMME POUR {current_chord} ===")
+        print(f"Type d'accord: {chord_type}")
+        print(f"Racine: {root}")
+        print(f"Gamme utilisée: {scale_name}")
+        print(f"Notes de la gamme: {' - '.join(scale_notes)}")
+        print(f"Classes de hauteur (0-11): {sorted(scale_pitch_classes)}")
+
         # Filtrer les symboles
         filtered_symbols = []
         filtered_counts = []
