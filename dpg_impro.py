@@ -14,6 +14,7 @@ from markov import generate_symbol_vlmc, is_white_note
 from accompaniement import chord_loop, play_mp3
 #from impro_genie import PianoGenieEngine
 
+dirname = os.path.dirname(__file__)
 
 log = print # type:ignore
 # Mapping clavier pour contour mélodique
@@ -29,7 +30,8 @@ BLACK_KEY_MAPPING = {
 
 PROGRESSION = ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7", "E7"]
 riff = [0, 2, 0, 2, 0, 4, 0, 4]
-xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
+# xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
+xml_folder = os.path.join(dirname, 'omnibook_xml')
 
 # Variables globales pour gérer le thread d'impro
 _impro_thread = None
@@ -260,7 +262,7 @@ def handle_keyup(event, state, synth, history, last_times):
     # Retirer le start
     del last_times['key_start'][event.key]
 
-def handle_keydown_midi(note_index, velocity, state, config, synth, history, last_times, log_callback=None):
+def handle_keydown_midi(note_index, velocity, state, config, synth, outport, history, last_times, log_callback=None):
     """
     Gère un événement note_on MIDI pour générer et jouer une note d'improvisation.
     Updated to use sym['played_pitch'] for playback while keeping sym in history (Option A).
@@ -392,8 +394,14 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     for p in pitches_to_play:
         p_clamped = int(max(0, min(127, p)))
-        # synth.noteon(0, p_clamped, vel)
-        out_msgs.append(mido.Message('note_on', note=p_clamped, velocity=vel, channel=0))
+        m = mido.Message('note_on', note=p_clamped, velocity=vel, channel=0)
+        out_msgs.append(m)
+
+        if outport is not None:
+            outport.send(m)
+
+        if config['sf_enable']:
+            synth.noteon(0, p_clamped, vel)
 
     # Store pitches in note_buffer using note_index as key
     state['note_buffer'][note_index] = pitches_to_play
@@ -405,7 +413,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     return out_msgs
 
-def handle_keyup_midi(note_index, state, synth, history, last_times):
+def handle_keyup_midi(note_index, state, config, synth, outport, history, last_times):
     """
     Gère un événement note_off MIDI pour arrêter la note et enregistrer sa durée.
 
@@ -431,7 +439,16 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     out_msgs = []
 
     for p in pitches:
-        out_msgs.append(mido.Message('note_off', note=p, velocity=0, channel=0))
+        # out_msgs.append(mido.Message('note_off', note=p, velocity=0, channel=0))
+        m = mido.Message('note_on', note=p, velocity=0, channel=0)
+        out_msgs.append(m)
+
+        if outport is not None:
+            outport.send(m)
+
+        if config['sf_enable']:
+            synth.noteoff(0, p)
+
     info = f"KU MIDI note {note_index} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
@@ -505,7 +522,8 @@ def improvisation_loop(config, stop_event, log_callback=None):
             _accomp_stop = state['accomp_stop']
 
             use_backtrack = config['backtrack_mode']
-            backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
+            # backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
+            backtrack_path = os.path.join(dirname, 'corpus/Blues Backing Track in A (90bpm).mp3')
             
             if use_backtrack and backtrack_path and os.path.exists(backtrack_path):
                 # Use MP3 backtrack
@@ -592,6 +610,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
                 midi_out_enabled = True
                 midi_out_port_name = config['device_out']
+                midi_out_port = None
                 if midi_out_port_name == 'None':
                     midi_out_enabled = False
                 elif midi_in_port_name == midi_out_port_name:
@@ -614,6 +633,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                                 state,
                                 config,
                                 synth,
+                                midi_out_port,
                                 history,
                                 last_times,
                                 log_callback,
@@ -622,21 +642,29 @@ def improvisation_loop(config, stop_event, log_callback=None):
                             generated_midi_events = handle_keyup_midi(
                                 msg.note,
                                 state,
+                                config,
                                 synth,
+                                midi_out_port,
                                 history,
                                 last_times,
                             )
-                        else:
-                            threading.Thread().wait(0.01)
 
+                    # if len(generated_midi_events) == 0:
+                    #     threading.Thread().wait(0.01)
+                    # else:
                     for msg in generated_midi_events:
                         if midi_out_enabled:
-                            midi_out_port.send(msg)
+                            # midi_out_port.send(msg)
+                            pass
                         if config['sf_enable']:
                             if msg.type == 'note_on':
-                                synth.noteon(0, msg.note, msg.velocity)
+                                # synth.noteon(0, msg.note, msg.velocity)
+                                pass
                             elif msg.type == 'note_off':
-                                synth.noteoff(0, msg.note)
+                                # synth.noteoff(0, msg.note)
+                                pass
+                            
+                    sleep(0.01)
 
                 print('closing MIDI ports')
                 try:
