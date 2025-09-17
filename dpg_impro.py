@@ -12,6 +12,7 @@ import pretrained as pt
 from factor_oracle import generate_note_oracle
 from markov import generate_symbol_vlmc, is_white_note
 from accompaniement import chord_loop, play_mp3
+from record_impro import serialize_info, save_accomp_entries_to_file
 #from impro_genie import PianoGenieEngine
 
 
@@ -146,7 +147,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
             similarity_level   = config.get('sim_lvl', 3),
             n_candidates       = config.get('n_candidat', 1),
             current_chord      = None,
-            use_scale_filter   = False
+            use_scale_filter   = False,
         )
         # Keep logical symbol in history (Option A)
         state['symbol_history'].append(sym)
@@ -264,6 +265,11 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     Gère un événement note_on MIDI pour générer et jouer une note d'improvisation.
     Updated to use sym['played_pitch'] for playback while keeping sym in history (Option A).
     """
+    # --- initialisations sûres pour variables optionnelles ---
+    chord_name = None
+    is_black = None
+    duration = None
+
     # Calcul du gap
     prev_idx = last_times.get('prev_key_index')
     gap = 0 if prev_idx is None else note_index - prev_idx
@@ -278,6 +284,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         dur_eff = last_times.get('last_note_duration', 0.0)
 
     raw_note = None
+
 
     if config['mode'] == 'oracle':
         new_state, raw_note, type_link = generate_note_oracle(
@@ -331,7 +338,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         vlmc_table, all_keys = state['vlmcs'][chord_name]
 
         is_white_key = is_white_note(note_index)
-
+        is_black = not is_white_key
         sym, next_prob, top_probs = generate_symbol_vlmc(
             previous_symbols   = state['accomp_history'][chord_name],
             vlmc_table         = vlmc_table,
@@ -342,7 +349,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             n_candidates       = config.get('n_candidat', 2),
             current_chord      = chord_name,
             use_scale_filter   = is_white_key,
-            force_out_of_scale = not is_white_key,
+            force_out_of_scale = is_black,
         )
 
         state['accomp_history'][chord_name].append(sym)
@@ -373,19 +380,66 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         vel = velocity
     else:
         pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
+        # normalize_note may renvoyer None pour duration; on le laisse tel quel
         vel = velocity  # override with actual MIDI velocity
+
+    # Défensive: s'assurer que pitches_to_play est une liste non vide
+    if pitches_to_play is None:
+        pitches_to_play = []
+    else:
+        # clamp again par sécurité
+        pitches_to_play = [int(max(0, min(127, p))) for p in pitches_to_play]
 
     for p in pitches_to_play:
         p_clamped = int(max(0, min(127, p)))
         synth.noteon(0, p_clamped, vel)
 
     # Store pitches in note_buffer using note_index as key
-    state['note_buffer'][note_index] = pitches_to_play
+    state.setdefault('note_buffer', {})[note_index] = pitches_to_play
 
     # Initialize key_start dict if it doesn't exist
     last_times.setdefault('key_start', {})[note_index] = now
 
     log(f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
+
+    # Construire l'entrée en protégeant les variables optionnelles
+    entry = {
+        'chord': chord_name,
+        'pitch': pitches_to_play,
+        'onset': round(elapsed, 2),
+        'duration': round(duration, 2) if duration is not None else None,   # durée théorique si fournie
+        'velocity': vel,
+        'effective_duration': round(dur_eff, 2),
+        'is_black': is_black,
+        'desired': int(np.sign(gap)) if prev_idx is not None else None,
+        'actual': None,
+        'success': None
+    }
+
+    # Calculer 'actual' de façon sûre (s'il y a un historique de pitchs et au moins une pitch jouée)
+    if pitches_to_play and state.get('pitch_history'):
+        try:
+            last_pitch = state['pitch_history'][-1]
+            entry['actual'] = int(np.sign(pitches_to_play[0] - last_pitch))
+        except Exception:
+            entry['actual'] = None
+    else:
+        entry['actual'] = None
+
+    # Calculer 'success' de façon sûre :
+    # - si pas de prev_idx (pas de note précédente) -> None ou True selon préférence ; ici on met None pour indiquer indéterminé
+    # - si pas d'historique de pitchs -> None
+    # - sinon comparer le signe
+    if prev_idx is None or not state.get('pitch_history'):
+        entry['success'] = None
+    else:
+        if entry['actual'] is None:
+            entry['success'] = None
+        else:
+            desired_sign = int(np.sign(gap))
+            entry['success'] = (desired_sign == entry['actual'])
+
+    state.setdefault('note_entries', []).append(entry)
 
 
 def handle_keyup_midi(note_index, state, synth, history, last_times):
@@ -448,7 +502,8 @@ def improvisation_loop(config, stop_event, log_callback=None):
             'symbol_history':[initial],
             'pitch_history': [initial['pitch'] if initial['type']=='note' else initial['pitch'][0]],
             'symbols':       symbols,
-            'note_buffer':   {}
+            'note_buffer':   {},
+            'note_entries':  []
         }
 
         synth = init_audio(config['sf2_path'], config['audio_driver'])
@@ -589,6 +644,10 @@ def improvisation_loop(config, stop_event, log_callback=None):
     
     finally:
         # Nettoyage final
+        if config['mode'] == 'accompagnement' and state.get('note_entries'):
+            save_accomp_entries_to_file(state)
+            if log_callback:
+                log_callback(f"Saved {len(state['note_entries'])} accompaniment entries")
         try:
             if 'synth' in locals():
                 synth.delete()

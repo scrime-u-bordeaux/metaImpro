@@ -4,7 +4,7 @@ from dpg_impro import run_impro, stop_impro_thread
 import os
 import ast
 import json
-import re
+from datetime import datetime
 import random
 import fluidsynth
 
@@ -12,10 +12,7 @@ model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
 is_impro_running = False
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
-EVAL_P_DIR = "eval/probs"
-EVAL_G_DIR = "eval/graph"
-EVAL_H_DIR = "eval/histogram"
-BASENAME = "probs"
+EVAL_DIR = "eval/"
 EXT = ".json"
 
 # Variables globales pour gérer le thread d'impro
@@ -191,35 +188,6 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
             
     except Exception as e:
         print(f"Erreur update pie chart: {e}")
-
-def save_prob_history(prob_history, title: str, mode):
-    # Sauvegarde uniquement pour le mode markov
-    if mode not in ['markov', 'accompagnement']:
-        return
-
-    os.makedirs(EVAL_P_DIR, exist_ok=True)
-
-    # Nettoie le titre pour enlever toute extension
-    title_clean = os.path.splitext(title)[0]
-
-    # Récupère les indices existants
-    existing = os.listdir(EVAL_P_DIR)
-    pattern = re.compile(rf"^{BASENAME}_(\d{{3}}){re.escape(EXT)}$")
-    indices = [
-        int(m.group(1))
-        for f in existing
-        if (m := pattern.match(f))
-    ]
-    order = dpg.get_value('markov_order')
-    next_idx = max(indices) + 1 if indices else 1
-    filename = f"{BASENAME}_{next_idx:03d}_{title_clean}_ordre{order}{EXT}"
-    path = os.path.join(EVAL_P_DIR, filename)
-
-    with open(path, "w") as fp:
-        json.dump(prob_history, fp, indent=2)
-
-    print(f"Saved {len(prob_history)} probs into {path}")
-    return path
       
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag, backtrack_checkbox_tag= user_data
@@ -369,7 +337,6 @@ def on_launch(sender, app_data):
     is_impro_running = True
     update_button_text()
 
-    save_prob_history(prob_history, chosen, model)
     run_impro(cfg, append_log_entry)
 
 def stop_impro():
@@ -379,11 +346,10 @@ def stop_impro():
     stop_impro_thread()
     
     is_impro_running = False
-    update_button_text()
-    
+    update_button_text()    
     # Sauvegarder l'historique à l'arrêt
     mode = dpg.get_value('model_combo')
-    save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
+
     
     append_log_entry("Improvisation arrêtée")
 
@@ -401,7 +367,6 @@ def on_exit():
         stop_impro()
     else:
         mode = dpg.get_value('model_combo')
-        save_prob_history(prob_history, dpg.get_value('corpus_combo'), mode)
 
 def get_available_audio_drivers():
     fs = fluidsynth.Synth()
