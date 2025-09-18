@@ -173,7 +173,8 @@ def is_white_note(index):
     Returns:
         bool
     """
-    WHITE_SEMITONES = {0, 2, 4, 5, 7, 9, 11}
+    # WHITE_SEMITONES = {0, 2, 4, 5, 7, 9, 11}
+    WHITE_SEMITONES = {1, 2, 3, 4, 5, 6, 7, 8, 9}
     return  (index % 12) in WHITE_SEMITONES
 
 def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):

@@ -37,7 +37,7 @@ xml_folder = os.path.join(dirname, 'omnibook_xml')
 _impro_thread = None
 _stop_event = None
 
-def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
+def init_audio(sf2_path: str, driver: str = "coreaudio", preset: int = 1):
     """
     Initialise FluidSynth avec la SoundFont spécifiée.
 
@@ -394,7 +394,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, outport, his
 
     for p in pitches_to_play:
         p_clamped = int(max(0, min(127, p)))
-        m = mido.Message('note_on', note=p_clamped, velocity=vel, channel=0)
+        m = mido.Message('note_on', note=p_clamped, velocity=vel, channel=3)
         out_msgs.append(m)
 
         if outport is not None:
@@ -440,7 +440,7 @@ def handle_keyup_midi(note_index, state, config, synth, outport, history, last_t
 
     for p in pitches:
         # out_msgs.append(mido.Message('note_off', note=p, velocity=0, channel=0))
-        m = mido.Message('note_on', note=p, velocity=0, channel=0)
+        m = mido.Message('note_on', note=p, velocity=0, channel=3)
         out_msgs.append(m)
 
         if outport is not None:

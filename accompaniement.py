@@ -277,7 +277,7 @@ def play_mp3(mp3_path: str,
 
 
         pygame.mixer.music.load(mp3_path)
-        pygame.mixer.music.set_volume(0.1)
+        pygame.mixer.music.set_volume(0.2)
         pygame.mixer.music.play(-1)  # loop indefinitely
 
         start_time = time.monotonic()
