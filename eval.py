@@ -1,228 +1,183 @@
-from collections import Counter
+# analysis.py
 import json
-import os
+import pandas as pd
 import numpy as np
-from midi_processor import MidiSymbolProcessor
 import matplotlib.pyplot as plt
-import seaborn as sns
+from pathlib import Path
+from collections import Counter
 
-class Eval:
+# --- config ---
+DATA_FILE = "eval/accomp_notes_20250922_092434.json"
+OUT_DIR = Path("analysis_output")
+OUT_DIR.mkdir(exist_ok=True)
 
-    NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+# --- helper ---
+def load_json(fn):
+    with open(fn, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    # normalize to DataFrame
+    rows = []
+    for e in data:
+        r = {}
+        r['chord'] = e.get('chord')
+        # pitch can be list: use first pitch for analysis
+        pitch = e.get('pitch')
+        r['pitch'] = pitch[0] if isinstance(pitch, list) and len(pitch)>0 else (pitch or np.nan)
+        r['onset'] = e.get('onset', np.nan)
+        r['duration'] = e.get('duration', np.nan)
+        r['velocity'] = e.get('velocity', np.nan)
+        r['effective_duration'] = e.get('effective_duration', np.nan)
+        r['is_black'] = bool(e.get('is_black')) if 'is_black' in e else np.nan
+        r['desired'] = e.get('desired', np.nan)
+        r['actual'] = e.get('actual', np.nan)
+        r['success'] = e.get('success', None)
+        rows.append(r)
+    df = pd.DataFrame(rows)
+    return df
 
-    def __init__(self, path: str):
-        self.path = path
-        self.hist_dir = "eval/histogram/"
-        self.graph_dir = "eval/graph/"
-        self.pitches, self.probs = self.load_file()
+df = load_json(DATA_FILE)
 
-    def load_file(self):
-        if self.path.startswith("corpus"):
-            return self._load_corpus()
-        elif self.path.startswith("eval"):
-            return self._load_markov()
-        elif self.path.startswith("piano_genie"):
-            return self._load_dataset()
-        else:
-            ext = os.path.splitext(self.path)[1]
-            raise ValueError(
-                f"Unsupported path {self.path!r} (ext {ext!r}); "
-                "must start with corpus/, eval/ or piano_genie/."
-            )
+# basic cleaning / types
+df['onset'] = pd.to_numeric(df['onset'], errors='coerce')
+df['pitch'] = pd.to_numeric(df['pitch'], errors='coerce')
+df['effective_duration'] = pd.to_numeric(df['effective_duration'], errors='coerce')
+df['velocity'] = pd.to_numeric(df['velocity'], errors='coerce')
+df['duration'] = pd.to_numeric(df['duration'], errors='coerce')
 
-    def _load_corpus(self):
-        """Charge un unique fichier MIDI ou JSON de symboles."""
-        if self.path.lower().endswith(('.mid', '.midi')):
-            proc = MidiSymbolProcessor()
-            symbols = proc.process_midi_file(self.path)
-            raw = [p['pitch'] for p in symbols]
-        else:
-            with open(self.path, 'r') as f:
-                data = json.load(f)
-            raw = [p['pitch'] for p in data]
-        return self.flatten(raw), None
+# global metrics
+n_total = len(df)
+t_start = df['onset'].min()
+t_end = (df['onset'] + df['duration']).max()
+total_duration = t_end - t_start
+density = n_total / total_duration if total_duration>0 else np.nan
 
-    def _load_markov(self):
-        """Charge un JSON de paires [pitch, prob] produit par ton Markov."""
-        with open(self.path, 'r') as f:
-            data = json.load(f)
-        raw = [item[0] for item in data]
-        probs = [item[1] for item in data]
-        return self.flatten(raw), probs
+print(f"Total notes: {n_total}")
+print(f"Session duration: {total_duration:.2f} s (onset from {t_start} to {t_end})")
+print(f"Notes per second: {density:.3f}")
 
-    def _load_dataset(self):
-        """
-        Charge le cache piano_genie/..._performances.json,
-        extrait tous les pitch_idx (3ᵉ élément de chaque tuple).
-        """
-        with open(self.path, 'r') as f:
-            performances = json.load(f)
-        flat = []
-        for perf in performances:
-            # perf est une liste de (onset, dur, pitch_idx, vel)
-            flat.extend([entry[2] for entry in perf])
-        return flat, None
-    
-    def get_distrib(self):
-        count = Counter(self.pitches)
-        return count
-    
-    def num2note(self, pitch_num: int) -> str:
-        """Convert MIDI pitch number to note name (ignore octave)."""
-        return self.NOTES[pitch_num % 12]
-    
-    def flatten(self, data):
-        flat = []
-        for x in data:
-            if isinstance(x, (list, tuple)):
-                flat.extend(x)
-            else:
-                flat.append(x)
-        return flat
+# per-chord summary
+agg_funcs = {
+    'pitch': ['count', 'mean'],
+    'effective_duration': ['mean','std'],
+    'velocity': ['mean','std'],
+    'is_black': ['sum','count'],
+    'success': [lambda x: x.eq(True).sum(), 'count']
+}
+per_chord = df.groupby('chord').agg(
+    n_notes = ('pitch','count'),
+    mean_pitch = ('pitch','mean'),
+    mean_effective_duration = ('effective_duration','mean'),
+    std_effective_duration = ('effective_duration','std'),
+    mean_velocity = ('velocity','mean'),
+    std_velocity = ('velocity','std'),
+    n_black = ('is_black', lambda x: int(x.eq(True).sum())),
+    pct_black = ('is_black', lambda x: x.eq(True).sum() / max(1, x.count())),
+    n_success = ('success', lambda x: int(x.eq(True).sum())),
+    pct_success = ('success', lambda x: int(x.eq(True).sum()) / max(1, x.count()))
+).reset_index()
 
-    def _aligned_probs(self, other: "Eval"):
-        """Retourne deux vecteurs de probabilités alignés sur l'union des clés."""
-        dist1 = self.get_distrib()
-        dist2 = other.get_distrib()
-        # union des clés
-        keys = sorted(set(dist1.keys()) | set(dist2.keys()))
-        # compter totaux
-        total1 = sum(dist1.values())
-        total2 = sum(dist2.values())
-        # vecteurs
-        p = np.array([dist1.get(k, 0) / total1 for k in keys], dtype=float)
-        q = np.array([dist2.get(k, 0) / total2 for k in keys], dtype=float)
-        return p, q
-    
-    def distance(self, other: "Eval", type_dist="euclidean"):
-        p, q = self._aligned_probs(other)
-        if type_dist == "euclidean":
-            return np.linalg.norm(p - q)
-        else:
-            raise ValueError(f"Distance type {type_dist} not implemented")
-    
-    def plot_notes(self):
-        # Vérification de base
-        if self.probs is None or len(self.probs) == 0:
-            raise ValueError(
-                "You must use a non-empty list of probabilities in self.probs. "
-                "This method only works with Markov-generated data."
-            )
-        
-        # Préparation des données x et y
-        x = list(range(len(self.probs)))
-        y = self.probs
-        
-        # Trace
-        os.makedirs(self.graph_dir, exist_ok=True)
-        plt.figure(figsize=(12, 6))
-        plt.plot(x, y, marker='.', linestyle='-')
-        plt.xlabel("Index de l'événement")
-        plt.ylabel("Probabilité")
-        plt.title("Probabilité en fonction de l'index de l'événement")
-        plt.ylim(-0.05, 1.05)
-        plt.tight_layout()
-        
-        # Sauvegarde
-        base = os.path.splitext(os.path.basename(self.path))[0]
-        save_path = os.path.join(self.graph_dir, f"Prob_vs_Index_{base}.png")
-        plt.savefig(save_path)
-        plt.close()
-        print(f"Plot successfully saved in {save_path}")
+per_chord.to_csv(OUT_DIR / "summary_per_chord.csv", index=False)
+print("\nPer-chord summary saved to:", OUT_DIR / "summary_per_chord.csv")
+print(per_chord)
 
-    def plot_histogram(self):
-        count = self.get_distrib()
-        # Convert pitch keys to strings (to handle tuples cleanly)
-        labels = [str(k) for k in sorted(count.keys())]
-        values = [count[k] for k in sorted(count.keys())]
+# global black vs white success
+black_df = df[df['is_black']==True]
+white_df = df[df['is_black']==False]
 
-        os.makedirs(self.hist_dir, exist_ok=True)
-        plt.figure(figsize=(12, 6))
-        plt.bar(labels, values)
-        plt.xlabel("Pitch")
-        plt.ylabel("Count")
-        plt.title("Distribution des notes dans le morceau")
-        plt.xticks(rotation=90)  # Rotate x labels for better readability
-        plt.tight_layout()
+def success_rate(subdf):
+    if subdf.empty: return np.nan
+    return subdf['success'].eq(True).sum() / max(1, subdf['success'].count())
 
-        base = os.path.splitext(os.path.basename(self.path))[0]
-        save_path = os.path.join(self.hist_dir, f"Histogram_{base}.png")
-        plt.savefig(save_path)
-        plt.close()
-        print(f"Histogram successfully saved in {save_path}")
-            
-    def plot_density(self):
-        # Récupère les données brutes (uniquement des int après flatten)
-        raw_pitches = [p for p in self.pitches if isinstance(p, (int, float))]
+sr_black = success_rate(black_df)
+sr_white = success_rate(white_df)
+print(f"\nSuccess rate (black keys): {sr_black:.3f}")
+print(f"Success rate (white keys): {sr_white:.3f}")
 
-        if not raw_pitches:
-            print("No valid numeric pitch data for density plot.")
-            return
+# intervals distribution (pitch differences)
+df_sorted = df.sort_values('onset').reset_index(drop=True)
+df_sorted['next_pitch'] = df_sorted['pitch'].shift(-1)
+df_sorted['interval'] = df_sorted['next_pitch'] - df_sorted['pitch']
+interval_counts = df_sorted['interval'].dropna().value_counts().sort_index()
 
-        # Crée le dossier d'histogrammes s'il n'existe pas
-        os.makedirs(self.hist_dir, exist_ok=True)
+# save interval counts
+interval_counts.to_csv(OUT_DIR / "interval_counts.csv", header=['count'])
+print("\nInterval counts saved to:", OUT_DIR / "interval_counts.csv")
 
-        # Trace la KDE
-        plt.figure(figsize=(12, 6))
-        sns.kdeplot(raw_pitches, fill=True)
-        plt.xlabel("Pitch")
-        plt.ylabel("Density")
-        plt.title("Distribution des notes dans le morceau")
-        plt.tight_layout()
+# success vs failure stats for effective_duration & velocity
+stats = []
+for label, sub in [('success', df[df['success']==True]), ('failure', df[df['success']==False])]:
+    stats.append({
+        'label': label,
+        'n': len(sub),
+        'mean_eff_dur': sub['effective_duration'].mean(),
+        'std_eff_dur': sub['effective_duration'].std(),
+        'mean_vel': sub['velocity'].mean(),
+        'std_vel': sub['velocity'].std()
+    })
+stats_df = pd.DataFrame(stats)
+stats_df.to_csv(OUT_DIR / "success_vs_failure_stats.csv", index=False)
+print("\nSuccess vs failure stats saved to:", OUT_DIR / "success_vs_failure_stats.csv")
+print(stats_df)
 
-        # Prépare et sauve le fichier
-        base = os.path.splitext(os.path.basename(self.path))[0]
-        save_path = os.path.join(self.hist_dir, f"Density_plot_{base}.png")
-        plt.savefig(save_path)
-        plt.close()
-        print(f"Density plot successfully saved in {save_path}")
+# --- Figures ---
 
-    def compute_perplexity(self) -> float:
-        """
-        Calcule la perplexité pour la séquence de probabilités chargée (self.probs).
-        Perplexité: exp(-1/N * sum(log p_i)).
-        """
-        if self.probs is None or len(self.probs) == 0:
-            raise ValueError("Aucune probabilité disponible pour calculer la perplexité.")
-        
-        # Éviter les log(0) en filtrant ou en ajoutant un epsilon
-        safe_probs = [max(p, 1e-10) for p in self.probs]
-        log_probs = np.log(safe_probs)
-        N = len(log_probs)
-        return float(np.exp(-log_probs.sum() / N))
+# 1) histogram of pitches
+plt.figure()
+plt.hist(df['pitch'].dropna(), bins=range(int(df['pitch'].min())-1, int(df['pitch'].max())+2))
+plt.title("Histogram of pitches")
+plt.xlabel("MIDI pitch")
+plt.ylabel("Count")
+plt.tight_layout()
+plt.savefig(OUT_DIR / "hist_pitches.png")
+plt.close()
 
+# 2) timeline raster: onset vs pitch, marker for success
+plt.figure(figsize=(10,4))
+suc = df[df['success']==True]
+fail = df[df['success']==False]
+plt.scatter(suc['onset'], suc['pitch'], marker='o', label='success')
+plt.scatter(fail['onset'], fail['pitch'], marker='x', label='failure')
+plt.xlabel("Onset (s)")
+plt.ylabel("Pitch (MIDI)")
+plt.legend()
+plt.title("Timeline: pitch vs onset (success vs failure)")
+plt.tight_layout()
+plt.savefig(OUT_DIR / "timeline_success_fail.png")
+plt.close()
 
-if __name__ == "__main__":
-    path1 = "eval/probs/probs_001_bach_chorales.json"   
-    path2 = "corpus/bach_chorales.json"
-    path3 = "piano_genie/maestro-v3.0.0-midi_performances.json"
-    
-    e1 = Eval(path1)  # Données Markov avec probabilités
-    e2 = Eval(path2)  # Données corpus sans probabilités
-    e3 = Eval(path3)  # Données dataset piano_genie sans probabilités
-    
-    # Plots spécifiques selon le type de données
-    if e1.probs is not None:
-        e1.plot_notes()  # Seulement pour les données avec probabilités
-        print("Perplexité e1:", e1.compute_perplexity())
-    
-    # Plots disponibles pour tous types de données
-    print("Generating plots...")
-    e1.plot_histogram()
-    e2.plot_histogram()
-    e3.plot_histogram()  # Histogramme du dataset piano_genie
-    
-    e1.plot_density()
-    e2.plot_density()
-    e3.plot_density()    # Densité du dataset piano_genie
-    
-    # Comparaisons de distances
-    print("Distance euclidienne e1-e2 (Markov vs Corpus):", e1.distance(e2))
-    print("Distance euclidienne e1-e3 (Markov vs Dataset):", e1.distance(e3))
-    print("Distance euclidienne e2-e3 (Corpus vs Dataset):", e2.distance(e3))
-    
-    # Statistiques
-    print(f"Nombre de notes - e1: {len(e1.pitches)}, e2: {len(e2.pitches)}, e3: {len(e3.pitches)}")
-    print(f"Range de pitches - e1: {min(e1.pitches)}-{max(e1.pitches)}, "
-          f"e2: {min(e2.pitches)}-{max(e2.pitches)}, "
-          f"e3: {min(e3.pitches)}-{max(e3.pitches)}")
+# 3) boxplots effective_duration by success/failure
+plt.figure()
+data_to_plot = [df[df['success']==True]['effective_duration'].dropna(), df[df['success']==False]['effective_duration'].dropna()]
+plt.boxplot(data_to_plot, labels=['success','failure'])
+plt.ylabel("effective_duration (s)")
+plt.title("Effective duration: success vs failure")
+plt.tight_layout()
+plt.savefig(OUT_DIR / "box_effdur_success_fail.png")
+plt.close()
+
+# 4) bar: pct success per chord
+plt.figure(figsize=(8,4))
+p = per_chord.sort_values('pct_success', ascending=False)
+plt.bar(p['chord'].astype(str), p['pct_success'])
+plt.xlabel("Chord")
+plt.ylabel("Pct success")
+plt.title("Pct succès par accord")
+plt.tight_layout()
+plt.savefig(OUT_DIR / "pct_success_per_chord.png")
+plt.close()
+
+print("\nFigures saved in:", OUT_DIR)
+
+# Save cleaned dataframe for manual inspection
+df.to_csv(OUT_DIR / "cleaned_data.csv", index=False)
+print("Cleaned data saved to:", OUT_DIR / "cleaned_data.csv")
+
+# Quick summary file for report
+report_summary = {
+    'total_notes': n_total,
+    'session_duration_s': float(total_duration),
+    'notes_per_second': float(density),
+    'global_success_rate': float(df['success'].eq(True).sum() / max(1, df['success'].count()))
+}
+pd.Series(report_summary).to_csv(OUT_DIR / "report_summary.csv")
+print("Report summary saved to:", OUT_DIR / "report_summary.csv")

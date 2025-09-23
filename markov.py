@@ -392,11 +392,8 @@ def generate_symbol_vlmc(
 ) -> Tuple[Dict[str, Any], float, List[Tuple[Dict[str, Any], float]]]:
     """
     Génère le symbole suivant via VLMC avec logique de contour mélodique.
-    Retour:
-       sym (dict) avec champs standards + 'octave_shift' et 'played_pitch'
-       prob (float)
-       top_probs: list of (symbol_dict, prob) for up to 4 top candidates (base symbols, NOT played_pitch)
-    Option A behaviour: history keeps the base untransposed pitch; octave transposition applies to playback only.
+    Now supports cumulative octave transposition when there are no successors
+    in the desired direction: repeated "up" attempts produce +1, +2, ... octaves.
     """
     # helpers
     def pick_from_probs(keys, probs):
@@ -438,9 +435,11 @@ def generate_symbol_vlmc(
         # add octave_shift=0 / played_pitch = base pitch(s)
         if sym['type'] == 'note':
             sym['octave_shift'] = 0
+            sym['accumulated_octave'] = 0
             sym['played_pitch'] = int(max(0, min(127, int(sym['pitch']))))
         else:
             sym['octave_shift'] = 0
+            sym['accumulated_octave'] = 0
             sym['played_pitch'] = [int(max(0, min(127, int(p)))) for p in sym['pitch']]
         prob = float(probs[idx])
         top_idx = np.argsort(probs)[::-1][:min(4, len(keys))]
@@ -455,38 +454,68 @@ def generate_symbol_vlmc(
     prefilter_symbols = list(symbols_list)
     prefilter_counts = counts.copy()
 
-    # 4) Filtrage de contour (directional)
-    forced_octave_shift = 0
+    # 4) Filtrage de contour (directional) avec accumulation octave
+    forced_octave_shift = 0  # this will represent the *cumulative* octave transposition to apply
+    # read previous accumulated octave if available in last produced symbol (if user passed previous output)
+    prev_accum = 0
+    if previous_symbols:
+        last_item = previous_symbols[-1]
+        if isinstance(last_item, dict):
+            # prefer an explicit accumulated_octave field if present
+            prev_accum = int(last_item.get('accumulated_octave',
+                              last_item.get('octave_shift', 0)))
+        else:
+            prev_accum = 0
+
     if contour and previous_symbols:
-        last_key = symbol_to_key(previous_symbols[-1])
-        prev_pitch = last_key[1] if last_key[0] == "note" else last_key[1][0]
+        # determine previous *played* pitch, taking into account previous transposition if available
+        last_item = previous_symbols[-1]
+        if isinstance(last_item, dict) and 'played_pitch' in last_item:
+            prev_played = last_item['played_pitch']
+            prev_pitch = prev_played if isinstance(prev_played, (int, np.integer)) else prev_played[0]
+            prev_pitch = int(prev_pitch)
+        else:
+            last_key = symbol_to_key(previous_symbols[-1])
+            prev_pitch = last_key[1] if last_key[0] == "note" else last_key[1][0]
+
         flat = np.array([(k[1] if k[0] == "note" else k[1][0]) for k in symbols_list], dtype=float)
 
         if gap > 0:
             desired_mask = (flat > prev_pitch)
+            contour_info = "up"
+            step = 1
         elif gap < 0:
             desired_mask = (flat < prev_pitch)
+            contour_info = "down"
+            step = -1
         else:
             desired_mask = np.ones(len(symbols_list), bool)
+            contour_info = "same"
+            step = 0
 
         if desired_mask.any():
-            # keep only successors in the desired direction
+            # Successeurs existent dans la direction souhaitée -> on reset l'accumulateur
             symbols_list = [s for s, m in zip(symbols_list, desired_mask) if m]
             counts = np.array([dist[s] for s in symbols_list], dtype=float)
             forced_octave_shift = 0
+            print(f"Contour respecté avec un {contour_info} — accumulateur réinitialisé")
         else:
-            # There were successors but none in the desired direction:
-            # choose among successors as usual, but mark that playback must be transposed ±12
-            forced_octave_shift = 1 if gap > 0 else (-1 if gap < 0 else 0)
-            # keep symbols_list and counts as the original successors (do not filter them out)
+            # Aucun successeur dans la direction : on incrémente l'accumulateur
+            # cumulative behavior: continue to add +1/-1 octave each time this case happens
+            if step == 0:
+                forced_octave_shift = 0
+            else:
+                forced_octave_shift = prev_accum + step
+            # keep original successors (no filtering)
             symbols_list = list(prefilter_symbols)
             counts = prefilter_counts.copy()
+            print(f"Pas de successeur dans la direction {contour_info} — transposition cumulée = {forced_octave_shift}")
 
     # 5) Filtrage des notes out (scale filter)
     if current_chord and (use_scale_filter or force_out_of_scale):
         if force_out_of_scale:
             # For black keys: filter to keep only OUT-of-scale notes
-            symbols_list, counts = filter_out_of_scale(symbols_list, counts, current_chord)
+            symbols_list, counts = filter_out_of_scale(symbols_list, counts, current_chord, True)
         else:
             # For white keys: filter to keep only IN-scale notes (original behavior)
             symbols_list, counts = filter_by_scale(symbols_list, counts, current_chord, True)
@@ -505,7 +534,9 @@ def generate_symbol_vlmc(
         idx = pick_from_probs(keys, probs)
         chosen_key = keys[idx]
         sym = key_to_symbol(chosen_key)
+        # fallback: set accumulated_octave to 0 (no transposition)
         sym['octave_shift'] = 0
+        sym['accumulated_octave'] = 0
         if sym['type'] == 'note':
             sym['played_pitch'] = int(max(0, min(127, int(sym['pitch']))))
         else:
@@ -524,19 +555,22 @@ def generate_symbol_vlmc(
     top_idx = np.argsort(probs)[::-1][:min(4, len(symbols_list))]
     top_probs = [(key_to_symbol(symbols_list[i]), float(probs[i])) for i in top_idx]
 
-    # 8) Compute played_pitch according to forced_octave_shift (playback-only)
-    octave_shift = forced_octave_shift  # -1, 0 or +1
+    # 8) Compute played_pitch according to cumulative forced_octave_shift (playback-only)
+    # Note: forced_octave_shift is treated as the cumulative octave transposition to apply.
+    octave_shift_cumulative = int(forced_octave_shift)
     if sym['type'] == 'note':
         base = int(sym['pitch'])
-        played = base + 12 * octave_shift
+        played = base + 12 * octave_shift_cumulative
         # clamp to MIDI range
         played = max(0, min(127, played))
-        sym['octave_shift'] = octave_shift
+        sym['octave_shift'] = octave_shift_cumulative
+        sym['accumulated_octave'] = octave_shift_cumulative
         sym['played_pitch'] = int(played)
     else:
         base_list = [int(p) for p in sym['pitch']]
-        played_list = [max(0, min(127, p + 12 * octave_shift)) for p in base_list]
-        sym['octave_shift'] = octave_shift
+        played_list = [max(0, min(127, p + 12 * octave_shift_cumulative)) for p in base_list]
+        sym['octave_shift'] = octave_shift_cumulative
+        sym['accumulated_octave'] = octave_shift_cumulative
         sym['played_pitch'] = played_list
 
     return sym, prob, top_probs
