@@ -7,6 +7,7 @@ import re
 import pygame
 import time
 import threading
+import subprocess
 
 CHORD_TO_SCALE = {
     # Accords Majeurs et leurs extensions
@@ -272,8 +273,7 @@ def play_mp3(mp3_path: str,
             log_callback(f"🎵 Starting MP3 backtrack at {bpm} BPM: {os.path.basename(mp3_path)} (length={track_length}s)")
 
         beat_duration = 60.0 / bpm
-        bar_duration = 4 * beat_duration
-
+        
 
 
         pygame.mixer.music.load(mp3_path)
