@@ -176,7 +176,7 @@ def is_white_note(index):
     WHITE_SEMITONES = {0, 2, 4, 5, 7, 9, 11}
     return  (index % 12) in WHITE_SEMITONES
 
-def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
+def filter_by_scale(symbols_list, counts, current_chord, strict_mode=True):
     """
     Filtre les symboles candidats selon la gamme de l'accord courant
     
@@ -284,7 +284,7 @@ def filter_by_scale(symbols_list, counts, current_chord, strict_mode=False):
         print(f"Erreur dans filter_by_scale: {e}")
         return symbols_list, counts  # counts is already a numpy array now
     
-def filter_out_of_scale(symbols_list, counts, current_chord, strict_mode=False):
+def filter_out_of_scale(symbols_list, counts, current_chord, strict_mode=True):
     """
     NEW FUNCTION: Filtre les symboles candidats pour garder seulement ceux HORS de la gamme
     
@@ -395,16 +395,30 @@ def generate_symbol_vlmc(
     Now supports cumulative octave transposition when there are no successors
     in the desired direction: repeated "up" attempts produce +1, +2, ... octaves.
     """
-    # helpers
+
     def pick_from_probs(keys, probs):
-        # return index into keys/probs (int)
+        probs = np.array(probs, dtype=float)
+
+        # tri décroissant par prob
         order_idx = np.argsort(probs)[::-1]
         top_k = min(n_candidates, len(keys))
-        candidates_idx = order_idx[:top_k]
-        chosen_idx = int(np.random.choice(candidates_idx))
-        return chosen_idx
+        top_idx = order_idx[:top_k]             # indices dans la distribution originale
 
-    # 1) Préparer l’historique
+        # prendre les probabilités correspondantes et normaliser
+        top_probs = probs[top_idx].astype(float)
+        s = top_probs.sum()
+        if s <= 0 or np.any(np.isnan(top_probs)):
+            # fallback : uniforme si probs invalides
+            return int(np.random.choice(top_idx))
+        top_probs = top_probs / s
+
+        # choisir parmi les éléments top_idx en respectant top_probs
+        # np.random.choice peut prendre la liste top_idx comme population
+        chosen = np.random.choice(top_idx, p=top_probs)
+        return int(chosen)
+
+
+    # 1) Préparer l'historique
     full_history = [symbol_to_key(s) for s in previous_symbols]
     trunc_history = [truncate_key(k, similarity_level) for k in full_history]
     context = tuple(trunc_history[-max_order:]) if trunc_history else ()
@@ -468,6 +482,49 @@ def generate_symbol_vlmc(
             prev_accum = 0
 
     if contour and previous_symbols:
+        # Pour gap == 0 (same), on retourne directement la note précédente
+        if gap == 0:
+            last_item = previous_symbols[-1]
+            if isinstance(last_item, dict):
+                # Copier le symbole précédent
+                sym = last_item.copy()
+                # Garder l'accumulation d'octave existante
+                prev_accum = int(last_item.get('accumulated_octave', 
+                                last_item.get('octave_shift', 0)))
+                sym['octave_shift'] = prev_accum
+                sym['accumulated_octave'] = prev_accum
+                
+                # Conserver les played_pitch existants
+                if 'played_pitch' in last_item:
+                    sym['played_pitch'] = last_item['played_pitch']
+                else:
+                    # Recalculer si nécessaire
+                    if sym['type'] == 'note':
+                        base = int(sym['pitch'])
+                        played = max(0, min(127, base + 12 * prev_accum))
+                        sym['played_pitch'] = int(played)
+                    else:
+                        base_list = [int(p) for p in sym['pitch']]
+                        played_list = [max(0, min(127, p + 12 * prev_accum)) for p in base_list]
+                        sym['played_pitch'] = played_list
+                
+                print(f"Gap=0: répétition de la note précédente avec accumulated_octave={prev_accum}")
+                # Retourner directement sans passer par la sélection VLMC
+                return sym, 1.0, [(sym, 1.0)]
+            else:
+                # Fallback si le symbole précédent n'est pas un dict
+                last_key = symbol_to_key(last_item)
+                sym = key_to_symbol(last_key)
+                sym['octave_shift'] = 0
+                sym['accumulated_octave'] = 0
+                if sym['type'] == 'note':
+                    sym['played_pitch'] = int(max(0, min(127, int(sym['pitch']))))
+                else:
+                    sym['played_pitch'] = [int(max(0, min(127, int(p)))) for p in sym['pitch']]
+                print("Gap=0: répétition de la note précédente (fallback)")
+                return sym, 1.0, [(sym, 1.0)]
+
+        # Pour gap != 0, logique normale de contour
         # determine previous *played* pitch, taking into account previous transposition if available
         last_item = previous_symbols[-1]
         if isinstance(last_item, dict) and 'played_pitch' in last_item:
@@ -484,14 +541,10 @@ def generate_symbol_vlmc(
             desired_mask = (flat > prev_pitch)
             contour_info = "up"
             step = 1
-        elif gap < 0:
+        else:  # gap < 0
             desired_mask = (flat < prev_pitch)
             contour_info = "down"
             step = -1
-        else:
-            desired_mask = np.ones(len(symbols_list), bool)
-            contour_info = "same"
-            step = 0
 
         if desired_mask.any():
             # Successeurs existent dans la direction souhaitée -> on reset l'accumulateur
@@ -501,11 +554,7 @@ def generate_symbol_vlmc(
             print(f"Contour respecté avec un {contour_info} — accumulateur réinitialisé")
         else:
             # Aucun successeur dans la direction : on incrémente l'accumulateur
-            # cumulative behavior: continue to add +1/-1 octave each time this case happens
-            if step == 0:
-                forced_octave_shift = 0
-            else:
-                forced_octave_shift = prev_accum + step
+            forced_octave_shift = prev_accum + step
             # keep original successors (no filtering)
             symbols_list = list(prefilter_symbols)
             counts = prefilter_counts.copy()

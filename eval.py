@@ -1,183 +1,176 @@
-# analysis.py
 import json
-import pandas as pd
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from collections import Counter
+import os
 
 # --- config ---
-DATA_FILE = "eval/accomp_notes_20250922_092434.json"
-OUT_DIR = Path("analysis_output")
+DATA_FILE = Path("eval/")
+gesture_path = "eval/fixed_gesture"
+OUT_DIR = Path("eval/analysis_output")
 OUT_DIR.mkdir(exist_ok=True)
 
-# --- helper ---
-def load_json(fn):
-    with open(fn, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    # normalize to DataFrame
-    rows = []
-    for e in data:
-        r = {}
-        r['chord'] = e.get('chord')
-        # pitch can be list: use first pitch for analysis
-        pitch = e.get('pitch')
-        r['pitch'] = pitch[0] if isinstance(pitch, list) and len(pitch)>0 else (pitch or np.nan)
-        r['onset'] = e.get('onset', np.nan)
-        r['duration'] = e.get('duration', np.nan)
-        r['velocity'] = e.get('velocity', np.nan)
-        r['effective_duration'] = e.get('effective_duration', np.nan)
-        r['is_black'] = bool(e.get('is_black')) if 'is_black' in e else np.nan
-        r['desired'] = e.get('desired', np.nan)
-        r['actual'] = e.get('actual', np.nan)
-        r['success'] = e.get('success', None)
-        rows.append(r)
-    df = pd.DataFrame(rows)
-    return df
+def json_to_df(path):
+    json_files = [f for f in os.listdir(path) if f.endswith('.json')]
+    dfs = []
+    # Lire chaque fichier JSON et le stocker dans la liste
+    for file in json_files:
+        file_path = os.path.join(path, file)
+        df = pd.read_json(file_path)
+        df.name = file_path
+        dfs.append(df)
+    return dfs
 
-df = load_json(DATA_FILE)
+def get_mean_and_median(dfs):
+    results = []
+    for idx, df in enumerate(dfs):
+        df['pitch_values'] = df['pitch'].apply(lambda x: x[0])
+        mean_pitch = df['pitch_values'].mean()
+        median_pitch = df['pitch_values'].median()
+        
+        # Calculer le taux de succès du contour mélodique
+        success_rate = df['success'].mean() * 100 if 'success' in df.columns else None
+        
+        results.append((os.path.basename(df.name), mean_pitch, median_pitch, success_rate))
+        print(f"Fichier {df.name}: Moyenne des pitches = {mean_pitch:.2f}, Médiane des pitches = {median_pitch:.2f}")
+        if success_rate is not None:
+            print(f"  -> Taux de succès contour: {success_rate:.1f}%")
+    
+    # Créer un DataFrame pour affichage propre
+    columns = ['Fichier', 'Moyenne', 'Médiane']
+    if results and results[0][3] is not None:
+        columns.append('Taux_Succès_%')
+        
+    stats_df = pd.DataFrame(results, columns=columns)
+    stats_df['Moyenne'] = stats_df['Moyenne'].round(2)
+    stats_df['Médiane'] = stats_df['Médiane'].round(2)
+    if 'Taux_Succès_%' in stats_df.columns:
+        stats_df['Taux_Succès_%'] = stats_df['Taux_Succès_%'].round(1)
+    
+    return results, stats_df
 
-# basic cleaning / types
-df['onset'] = pd.to_numeric(df['onset'], errors='coerce')
-df['pitch'] = pd.to_numeric(df['pitch'], errors='coerce')
-df['effective_duration'] = pd.to_numeric(df['effective_duration'], errors='coerce')
-df['velocity'] = pd.to_numeric(df['velocity'], errors='coerce')
-df['duration'] = pd.to_numeric(df['duration'], errors='coerce')
+def get_distances(dfs):
+    distances = []
+    for i in range(len(dfs)):
+        for j in range(i+1, len(dfs)):
+            # Extraire les valeurs des pitches pour chaque DataFrame
+            a = dfs[i]
+            b = dfs[j]
+            # S'assurer que les DataFrames ont la même longueur
+            if len(a) != len(b):
+                print(f"Les DataFrames {a.name} et {b.name} n'ont pas la même longueur, impossible de calculer la distance.")
+                continue
+            a['pitch_values'] = a['pitch'].apply(lambda x: x[0])
+            b['pitch_values'] = b['pitch'].apply(lambda x: x[0])
+            # Calculer la distance (différence absolue moyenne)
+            distance = (a['pitch_values'] - b['pitch_values']).abs().mean()
+            distances.append((os.path.basename(a.name), os.path.basename(b.name), distance))
+            print(f"Distance entre {a.name} et {b.name}: {distance:.2f}")
+    
+    # Créer un DataFrame pour affichage propre
+    dist_df = pd.DataFrame(distances, columns=['Fichier 1', 'Fichier 2', 'Distance'])
+    dist_df['Distance'] = dist_df['Distance'].round(2)
+    
+    return distances, dist_df
 
-# global metrics
-n_total = len(df)
-t_start = df['onset'].min()
-t_end = (df['onset'] + df['duration']).max()
-total_duration = t_end - t_start
-density = n_total / total_duration if total_duration>0 else np.nan
+def create_piano_roll_visualization(dfs):
+    """Crée une visualisation piano roll pour tous les fichiers JSON"""
+    plt.figure(figsize=(15, 10))
+    
+    # Définir des couleurs pour chaque fichier
+    colors = plt.cm.Set3(np.linspace(0, 1, len(dfs)))
+    
+    for idx, df in enumerate(dfs):
+        filename = os.path.basename(df.name)
+        color = colors[idx]
+        
+        # Extraire les données nécessaires
+        df['pitch_values'] = df['pitch'].apply(lambda x: x[0])
+        onsets = df['onset']
+        pitches = df['pitch_values']
+        durations = df['effective_duration'] if 'effective_duration' in df.columns else [0.5] * len(df)
+        
+        # Dessiner les notes comme des rectangles
+        for j, (onset, pitch, duration) in enumerate(zip(onsets, pitches, durations)):
+            plt.barh(pitch, duration, left=onset, height=0.8, 
+                    color=color, alpha=0.7, edgecolor='black', linewidth=0.5,
+                    label=filename if j == 0 else "")
+    
+    plt.xlabel('Temps (s)', fontsize=12)
+    plt.ylabel('Hauteur MIDI', fontsize=12)
+    plt.title('Piano Roll - Comparaison des fichiers', fontsize=14, fontweight='bold')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    # Sauvegarder
+    plt.savefig(OUT_DIR / "piano_roll_comparison.png", dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return plt.gcf()
 
-print(f"Total notes: {n_total}")
-print(f"Session duration: {total_duration:.2f} s (onset from {t_start} to {t_end})")
-print(f"Notes per second: {density:.3f}")
+def create_success_rate_chart(stats_df):
+    """Crée un graphique du taux de succès si disponible"""
+    if 'Taux_Succès_%' not in stats_df.columns:
+        print("Pas de données de taux de succès disponibles")
+        return None
+        
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(range(len(stats_df)), stats_df['Taux_Succès_%'], 
+                   color=plt.cm.viridis(np.linspace(0, 1, len(stats_df))))
+    
+    plt.xlabel('Fichiers', fontsize=12)
+    plt.ylabel('Taux de succès (%)', fontsize=12)
+    plt.title('Taux de succès du contour mélodique par fichier', fontsize=14, fontweight='bold')
+    plt.xticks(range(len(stats_df)), stats_df['Fichier'], rotation=45, ha='right')
+    
+    # Ajouter les valeurs sur les barres
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                f'{height:.1f}%', ha='center', va='bottom')
+    
+    plt.ylim(0, 105)
+    plt.grid(True, alpha=0.3, axis='y')
+    plt.tight_layout()
+    
+    # Sauvegarder
+    plt.savefig(OUT_DIR / "taux_succes.png", dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return plt.gcf()
 
-# per-chord summary
-agg_funcs = {
-    'pitch': ['count', 'mean'],
-    'effective_duration': ['mean','std'],
-    'velocity': ['mean','std'],
-    'is_black': ['sum','count'],
-    'success': [lambda x: x.eq(True).sum(), 'count']
-}
-per_chord = df.groupby('chord').agg(
-    n_notes = ('pitch','count'),
-    mean_pitch = ('pitch','mean'),
-    mean_effective_duration = ('effective_duration','mean'),
-    std_effective_duration = ('effective_duration','std'),
-    mean_velocity = ('velocity','mean'),
-    std_velocity = ('velocity','std'),
-    n_black = ('is_black', lambda x: int(x.eq(True).sum())),
-    pct_black = ('is_black', lambda x: x.eq(True).sum() / max(1, x.count())),
-    n_success = ('success', lambda x: int(x.eq(True).sum())),
-    pct_success = ('success', lambda x: int(x.eq(True).sum()) / max(1, x.count()))
-).reset_index()
+dfs = json_to_df(gesture_path)
+mean_med, stats_table = get_mean_and_median(dfs)
+dist, dist_table = get_distances(dfs)
+create_piano_roll_visualization(dfs)
+create_success_rate_chart(dfs)
 
-per_chord.to_csv(OUT_DIR / "summary_per_chord.csv", index=False)
-print("\nPer-chord summary saved to:", OUT_DIR / "summary_per_chord.csv")
-print(per_chord)
+# Affichage des tableaux propres
+print("\n" + "="*50)
+print("TABLEAU DES STATISTIQUES")
+print("="*50)
+print(stats_table.to_string(index=False))
 
-# global black vs white success
-black_df = df[df['is_black']==True]
-white_df = df[df['is_black']==False]
+print("\n" + "="*50)
+print("TABLEAU DES DISTANCES")
+print("="*50)
+print(dist_table.to_string(index=False))
 
-def success_rate(subdf):
-    if subdf.empty: return np.nan
-    return subdf['success'].eq(True).sum() / max(1, subdf['success'].count())
+# Sauvegarde des tableaux
+stats_table.to_csv(OUT_DIR / "statistiques_pitch.csv", index=False)
+dist_table.to_csv(OUT_DIR / "distances_pitch.csv", index=False)
 
-sr_black = success_rate(black_df)
-sr_white = success_rate(white_df)
-print(f"\nSuccess rate (black keys): {sr_black:.3f}")
-print(f"Success rate (white keys): {sr_white:.3f}")
+# Pour LaTeX (si vous utilisez LaTeX dans votre rapport)
+with open(OUT_DIR / "stats_latex.txt", "w") as f:
+    f.write(stats_table.to_latex(index=False))
 
-# intervals distribution (pitch differences)
-df_sorted = df.sort_values('onset').reset_index(drop=True)
-df_sorted['next_pitch'] = df_sorted['pitch'].shift(-1)
-df_sorted['interval'] = df_sorted['next_pitch'] - df_sorted['pitch']
-interval_counts = df_sorted['interval'].dropna().value_counts().sort_index()
+with open(OUT_DIR / "distances_latex.txt", "w") as f:
+    f.write(dist_table.to_latex(index=False))
 
-# save interval counts
-interval_counts.to_csv(OUT_DIR / "interval_counts.csv", header=['count'])
-print("\nInterval counts saved to:", OUT_DIR / "interval_counts.csv")
-
-# success vs failure stats for effective_duration & velocity
-stats = []
-for label, sub in [('success', df[df['success']==True]), ('failure', df[df['success']==False])]:
-    stats.append({
-        'label': label,
-        'n': len(sub),
-        'mean_eff_dur': sub['effective_duration'].mean(),
-        'std_eff_dur': sub['effective_duration'].std(),
-        'mean_vel': sub['velocity'].mean(),
-        'std_vel': sub['velocity'].std()
-    })
-stats_df = pd.DataFrame(stats)
-stats_df.to_csv(OUT_DIR / "success_vs_failure_stats.csv", index=False)
-print("\nSuccess vs failure stats saved to:", OUT_DIR / "success_vs_failure_stats.csv")
-print(stats_df)
-
-# --- Figures ---
-
-# 1) histogram of pitches
-plt.figure()
-plt.hist(df['pitch'].dropna(), bins=range(int(df['pitch'].min())-1, int(df['pitch'].max())+2))
-plt.title("Histogram of pitches")
-plt.xlabel("MIDI pitch")
-plt.ylabel("Count")
-plt.tight_layout()
-plt.savefig(OUT_DIR / "hist_pitches.png")
-plt.close()
-
-# 2) timeline raster: onset vs pitch, marker for success
-plt.figure(figsize=(10,4))
-suc = df[df['success']==True]
-fail = df[df['success']==False]
-plt.scatter(suc['onset'], suc['pitch'], marker='o', label='success')
-plt.scatter(fail['onset'], fail['pitch'], marker='x', label='failure')
-plt.xlabel("Onset (s)")
-plt.ylabel("Pitch (MIDI)")
-plt.legend()
-plt.title("Timeline: pitch vs onset (success vs failure)")
-plt.tight_layout()
-plt.savefig(OUT_DIR / "timeline_success_fail.png")
-plt.close()
-
-# 3) boxplots effective_duration by success/failure
-plt.figure()
-data_to_plot = [df[df['success']==True]['effective_duration'].dropna(), df[df['success']==False]['effective_duration'].dropna()]
-plt.boxplot(data_to_plot, labels=['success','failure'])
-plt.ylabel("effective_duration (s)")
-plt.title("Effective duration: success vs failure")
-plt.tight_layout()
-plt.savefig(OUT_DIR / "box_effdur_success_fail.png")
-plt.close()
-
-# 4) bar: pct success per chord
-plt.figure(figsize=(8,4))
-p = per_chord.sort_values('pct_success', ascending=False)
-plt.bar(p['chord'].astype(str), p['pct_success'])
-plt.xlabel("Chord")
-plt.ylabel("Pct success")
-plt.title("Pct succès par accord")
-plt.tight_layout()
-plt.savefig(OUT_DIR / "pct_success_per_chord.png")
-plt.close()
-
-print("\nFigures saved in:", OUT_DIR)
-
-# Save cleaned dataframe for manual inspection
-df.to_csv(OUT_DIR / "cleaned_data.csv", index=False)
-print("Cleaned data saved to:", OUT_DIR / "cleaned_data.csv")
-
-# Quick summary file for report
-report_summary = {
-    'total_notes': n_total,
-    'session_duration_s': float(total_duration),
-    'notes_per_second': float(density),
-    'global_success_rate': float(df['success'].eq(True).sum() / max(1, df['success'].count()))
-}
-pd.Series(report_summary).to_csv(OUT_DIR / "report_summary.csv")
-print("Report summary saved to:", OUT_DIR / "report_summary.csv")
+print(f"\nTableaux sauvegardés dans {OUT_DIR}/")
+print("- statistiques_pitch.csv")
+print("- distances_pitch.csv") 
+print("- stats_latex.txt (pour LaTeX)")
+print("- distances_latex.txt (pour LaTeX)")

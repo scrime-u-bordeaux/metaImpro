@@ -1,4 +1,4 @@
-from time import time
+from time import time, sleep
 import mido
 import fluidsynth
 import random
@@ -12,7 +12,7 @@ import pretrained as pt
 from factor_oracle import generate_note_oracle
 from markov import generate_symbol_vlmc, is_white_note
 from accompaniement import chord_loop, play_mp3
-from record_impro import serialize_info, save_accomp_entries_to_file
+from record_impro import serialize_info, save_accomp_entries_to_file, _sign_to_str
 #from impro_genie import PianoGenieEngine
 
 
@@ -269,6 +269,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     chord_name = None
     is_black = None
     duration = None
+    elapsed = None       
+    next_prob = None
 
     # Calcul du gap
     prev_idx = last_times.get('prev_key_index')
@@ -345,8 +347,8 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
             max_order          = config.get('markov_order', 2),
             gap                = gap,
             contour            = True,
-            similarity_level   = config.get('sim_lvl', 3),
-            n_candidates       = config.get('n_candidat', 2),
+            similarity_level   = config.get('sim_lvl', 2),
+            n_candidates       = config.get('n_candidat', 5),
             current_chord      = chord_name,
             use_scale_filter   = is_white_key,
             force_out_of_scale = is_black,
@@ -402,18 +404,25 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
 
     log(f"KD MIDI note {note_index} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
 
+    if prev_idx is None:
+        desired_str = None
+    else:
+        g = int(np.sign(gap)) if gap is not None else 0
+        desired_str = _sign_to_str(int(g))
     # Construire l'entrée en protégeant les variables optionnelles
     entry = {
         'chord': chord_name,
         'pitch': pitches_to_play,
-        'onset': round(elapsed, 2),
+        'onset': round(elapsed, 2) if elapsed is not None else None,
         'duration': round(duration, 2) if duration is not None else None,   # durée théorique si fournie
         'velocity': vel,
         'effective_duration': round(dur_eff, 2),
+        'note_index': note_index,
         'is_black': is_black,
-        'desired': int(np.sign(gap)) if prev_idx is not None else None,
+        'desired': desired_str,
         'actual': None,
-        'success': None
+        'success': None,
+        'note_prob': next_prob
     }
 
     # Calculer 'actual' de façon sûre (s'il y a un historique de pitchs et au moins une pitch jouée)
@@ -616,10 +625,22 @@ def improvisation_loop(config, stop_event, log_callback=None):
 
         else:
             try:
+                default_gesture = {
+                    'note_indices': [
+                        60, 61, 61, 58, 57, 58, 60, 65, 68, 69, 70, 71, 72, 71, 69
+                    ],
+                    'velocities': [
+                        80, 95, 85, 100, 90, 95, 110, 100, 120, 105, 115, 100, 95, 90, 85
+                    ],
+                    'durations': [
+                        0.35, 0.25, 0.3, 0.28, 0.4, 0.3, 0.25, 0.35, 0.22, 0.3, 0.24, 0.4, 0.45, 0.32, 0.38
+                    ]
+                }
                 midi_port = mido.open_input(config['device_in']) #type:ignore
                 print(f"MIDI mode actif avec le port : {config['device_in']}")
-                print("bonjour")
+                
                 while not stop_event.is_set():
+                    
                     for msg in midi_port.iter_pending():
                     # Utiliser polling avec timeout pour vérifier stop_event
                         if msg.type == 'note_on' and msg.velocity > 0:                                                        
@@ -629,7 +650,19 @@ def improvisation_loop(config, stop_event, log_callback=None):
                         else:
                             # Petite pause si aucun message MIDI
                             threading.Event().wait(0.01)  # 10ms
-                        
+                        """
+                n =  0
+                while n < 15:
+                    for note, velocity, duration in zip(default_gesture['note_indices'],
+                                                default_gesture['velocities'],
+                                                default_gesture['durations']):
+                        # Simuler note_on
+                        handle_keydown_midi(note, velocity, state, config, synth, history, last_times, log_callback)
+                        sleep(duration)  
+                        # Simuler note_off
+                        handle_keyup_midi(note, state, synth, history, last_times)
+                        n+=1
+                        """
                 midi_port.close()
                 
             except (OSError, IOError) as e:

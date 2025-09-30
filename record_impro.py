@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 import os
 
-EVAL_DIR = "eval/"
+EVAL_DIR = "eval"
 def serialize_info(chord, pitch, onset, duration, velocity, effective_duration, is_black, desired, actual, success):
     """
     Normalise et retourne une entrée d'information pour historique/logging.
@@ -33,6 +33,11 @@ def serialize_info(chord, pitch, onset, duration, velocity, effective_duration, 
         "success_contour": bool(success),
     }
     return entry
+
+def _sign_to_str(x):
+    if x == 0:
+        return 'same'
+    return 'up' if x > 0 else 'down'
 
 def save_accomp_entries_to_file(state, out_dir=EVAL_DIR, prefix="accomp_notes"):
     """
