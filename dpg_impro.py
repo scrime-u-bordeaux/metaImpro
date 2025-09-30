@@ -1,23 +1,22 @@
-from time import time, sleep
+from time import time
 import mido
 import fluidsynth
 import random
 import numpy as np
-from typing import List, Any, Dict
+from typing import  Any, Dict
 import pygame
 import threading
 import os
-import json
 import pretrained as pt
 from factor_oracle import generate_note_oracle
 from markov import generate_symbol_vlmc, is_white_note
 from accompaniement import chord_loop, play_mp3
-from record_impro import serialize_info, save_accomp_entries_to_file, _sign_to_str
-#from impro_genie import PianoGenieEngine
+from record_impro import save_accomp_entries_to_file, _sign_to_str
+
 
 
 log = print # type:ignore
-# Mapping clavier pour contour mélodique
+# Keyboard mapping for melodic contour
 KEYBOARD_MAPPING = {
     pygame.K_q: 0, pygame.K_s: 2, pygame.K_d: 4, pygame.K_f: 6, 
     pygame.K_g: 8, pygame.K_h: 10, pygame.K_j: 12, pygame.K_k: 14,
@@ -32,21 +31,21 @@ PROGRESSION = ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7",
 riff = [0, 2, 0, 2, 0, 4, 0, 4]
 xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
 
-# Variables globales pour gérer le thread d'impro
+# global variables to handle impro thread
 _impro_thread = None
 _stop_event = None
 
 def init_audio(sf2_path: str, driver: str = "pulseaudio", preset: int = 1):
     """
-    Initialise FluidSynth avec la SoundFont spécifiée.
+    Initialise FluidSynth with specified soundfont.
 
     Args:
-        sf2_path (str): Chemin vers le fichier SoundFont (.sf2).
-        driver (str): Nom du pilote audio (ex: "pulseaudio").
-        preset (int): Numéro du preset à sélectionner dans la banque.
+        sf2_path (str): Patht to SoundFont file (.sf2).
+        driver (str): Audio pilote name (ex: "pulseaudio").
+        preset (int): Preset of the soundfont.
 
     Returns:
-        fluidsynth.Synth: L'objet Synth initialisé et prêt à jouer.
+        fluidsynth.Synth: Initialised Synth object .
     """
     fs = fluidsynth.Synth()
     fs.start(driver=driver)
@@ -89,11 +88,11 @@ def normalize_note(note, dur_eff=None, default_velocity=120):
 
 def handle_keydown(event, state, config, synth, history, last_times, log_callback=None):
     """
-    Gère un événement KEYDOWN pour générer et jouer une note d'improvisation.
+    Handle a KEYDOWN event to generate and play an improvisation note.
     Updated: uses sym['played_pitch'] for playback (if present) while keeping sym
     (logical pitch) in the history (Option A).
     """
-    # Calcul du gap & mapping
+    # Compute the gap & mapping
     if event.key in KEYBOARD_MAPPING:
         idx = KEYBOARD_MAPPING[event.key]
         is_black = False
@@ -111,7 +110,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
     gap = 0 if prev_idx is None else idx - prev_idx
     last_times['prev_key_index'] = idx
 
-    # Durée effective
+    # Effective duration
     now = time()
     if last_times.get('last_note_end') is not None and now >= last_times.get('last_note_end'):
         silence = now - last_times.get('last_note_end')
@@ -119,7 +118,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
     else:
         dur_eff = last_times.get('last_note_duration', 0.0)
 
-    # Génération de la note selon mode
+    # Note generation depending on mode
     raw_note = None
 
     if config['mode'] == 'oracle':
@@ -201,7 +200,7 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
         midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
         raw_note = [midi_pitch]
 
-    # Jouer note ou accord
+    # Play note or chord
     # If raw_note is the symbol dict produced by generate_symbol_vlmc, prefer its 'played_pitch'.
     if isinstance(raw_note, dict) and 'played_pitch' in raw_note:
         played = raw_note['played_pitch']
@@ -226,27 +225,26 @@ def handle_keydown(event, state, config, synth, history, last_times, log_callbac
 
     log(f"KD {pygame.key.name(event.key)} -> pitch {pitches_to_play}, vel {vel}, dur_eff {dur_eff}, gap {gap}")
 
-    
 
 
 
 def handle_keyup(event, state, synth, history, last_times):
     """
-    Gère un événement KEYUP pour arrêter la note et enregistrer sa durée.
+    Handle a KEYUP event to stop the note and record its duration.
 
     Args:
         event: pygame KEYUP event
-        state: dict, contient note_buffer
+        state: dict, contains note_buffer
         synth: fluidsynth Synth
-        history: list, accumulate logs
-        last_times: dict, gère key_start, last_note_end, last_note_duration
+        history: list, accumulates logs
+        last_times: dict, manages key_start, last_note_end, last_note_duration
 
     Returns:
         None
     """
-    # Durée réelle
+    # Actual duration
     dur = time() - last_times['key_start'][event.key]
-    # Récupérer pitch et arrêter le son
+    # Retrieve pitch and stop the sound
     pitches = state['note_buffer'].pop(event.key, None)
     if pitches is not None:
         for p in pitches:
@@ -254,30 +252,30 @@ def handle_keyup(event, state, synth, history, last_times):
     info = f"KU {pygame.key.name(event.key)} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
-    # Mettre à jour les temps
+    # Update timing info
     last_times['last_note_end'] = time()
     last_times['last_note_duration'] = dur
-    # Retirer le start
+    # Remove the start entry
     del last_times['key_start'][event.key]
 
 def handle_keydown_midi(note_index, velocity, state, config, synth, history, last_times, log_callback=None):
     """
-    Gère un événement note_on MIDI pour générer et jouer une note d'improvisation.
+    Handle a MIDI note_on event to generate and play an improvisation note.
     Updated to use sym['played_pitch'] for playback while keeping sym in history (Option A).
     """
-    # --- initialisations sûres pour variables optionnelles ---
+    # --- safe initializations for optional variables ---
     chord_name = None
     is_black = None
     duration = None
     elapsed = None       
     next_prob = None
 
-    # Calcul du gap
+    # Compute the gap
     prev_idx = last_times.get('prev_key_index')
     gap = 0 if prev_idx is None else note_index - prev_idx
     last_times['prev_key_index'] = note_index
 
-    # Durée effective
+    # Effective duration
     now = time()
     if last_times.get('last_note_end') is not None and now >= last_times.get('last_note_end'):
         silence = now - last_times.get('last_note_end')
@@ -369,7 +367,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         midi_pitch, onset = state["engine"].generate_note_from_button(btn_idx, dur_eff)
         raw_note = [midi_pitch]
 
-    # Jouer note ou accord
+    # Play note or chord
     # Prefer sym['played_pitch'] if available; otherwise fall back to normalize_note
     if isinstance(raw_note, dict) and 'played_pitch' in raw_note:
         played = raw_note['played_pitch']
@@ -382,14 +380,14 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         vel = velocity
     else:
         pitches_to_play, duration, vel = normalize_note(raw_note, dur_eff)
-        # normalize_note may renvoyer None pour duration; on le laisse tel quel
+        # normalize_note may return None for duration; keep it as is
         vel = velocity  # override with actual MIDI velocity
 
-    # Défensive: s'assurer que pitches_to_play est une liste non vide
+    # Defensive: ensure pitches_to_play is a non-empty list
     if pitches_to_play is None:
         pitches_to_play = []
     else:
-        # clamp again par sécurité
+        # clamp again for safety
         pitches_to_play = [int(max(0, min(127, p))) for p in pitches_to_play]
 
     for p in pitches_to_play:
@@ -409,12 +407,12 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     else:
         g = int(np.sign(gap)) if gap is not None else 0
         desired_str = _sign_to_str(int(g))
-    # Construire l'entrée en protégeant les variables optionnelles
+    # Build the entry while protecting optional variables
     entry = {
         'chord': chord_name,
         'pitch': pitches_to_play,
         'onset': round(elapsed, 2) if elapsed is not None else None,
-        'duration': round(duration, 2) if duration is not None else None,   # durée théorique si fournie
+        'duration': round(duration, 2) if duration is not None else None,   # theoretical duration if provided
         'velocity': vel,
         'effective_duration': round(dur_eff, 2),
         'note_index': note_index,
@@ -425,7 +423,7 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
         'note_prob': next_prob
     }
 
-    # Calculer 'actual' de façon sûre (s'il y a un historique de pitchs et au moins une pitch jouée)
+    # Compute 'actual' safely (if there is a pitch history and at least one played pitch)
     if pitches_to_play and state.get('pitch_history'):
         try:
             last_pitch = state['pitch_history'][-1]
@@ -435,10 +433,10 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     else:
         entry['actual'] = None
 
-    # Calculer 'success' de façon sûre :
-    # - si pas de prev_idx (pas de note précédente) -> None ou True selon préférence ; ici on met None pour indiquer indéterminé
-    # - si pas d'historique de pitchs -> None
-    # - sinon comparer le signe
+    # Compute 'success' safely:
+    # - if no prev_idx (no previous note) -> None (undetermined)
+    # - if no pitch history -> None
+    # - otherwise compare the sign
     if prev_idx is None or not state.get('pitch_history'):
         entry['success'] = None
     else:
@@ -451,28 +449,29 @@ def handle_keydown_midi(note_index, velocity, state, config, synth, history, las
     state.setdefault('note_entries', []).append(entry)
 
 
+
 def handle_keyup_midi(note_index, state, synth, history, last_times):
     """
-    Gère un événement note_off MIDI pour arrêter la note et enregistrer sa durée.
+    Handle a MIDI note_off event to stop the note and record its duration.
 
     Args:
-        note_index (int): Index de la note MIDI (0-127)
-        state (dict): Contient note_buffer
-        synth (fluidsynth.Synth): Synthétiseur FluidSynth
-        history (list): Accumule les logs
-        last_times (dict): Gère key_start, last_note_end, last_note_duration
+        note_index (int): MIDI note index (0-127)
+        state (dict): Contains note_buffer
+        synth (fluidsynth.Synth): FluidSynth synthesizer
+        history (list): Accumulates logs
+        last_times (dict): Manages key_start, last_note_end, last_note_duration
 
     Returns:
         None
     """
-    # Vérifier si la note était en cours
+    # Check if the note was active
     start_time = last_times['key_start'].get(note_index)
     if start_time is None:
-        return  # Ignorer si aucune note_on correspondante
+        return  # Ignore if no corresponding note_on
 
-    # Durée réelle
+    # Actual duration
     dur = time() - start_time
-    # Récupérer le pitch et arrêter le son
+    # Retrieve the pitch and stop the sound
     pitches = state['note_buffer'].pop(note_index, None)
     if pitches is not None:
         for p in pitches:
@@ -480,14 +479,14 @@ def handle_keyup_midi(note_index, state, synth, history, last_times):
     info = f"KU MIDI note {note_index} -> pitch {pitches}, dur {dur:.2f}"
     log(info)
 
-    # Mettre à jour les temps
+    # Update timing info
     last_times['last_note_end'] = time()
     last_times['last_note_duration'] = dur
-    # Retirer le start
+    # Remove the start entry
     del last_times['key_start'][note_index]
 
 def improvisation_loop(config, stop_event, log_callback=None):
-    """Boucle principale d'improvisation avec gestion d'arrêt améliorée."""
+    """Main improvisation loop with improved stop handling."""
     
     history = []
 
@@ -528,12 +527,12 @@ def improvisation_loop(config, stop_event, log_callback=None):
             state['notes'] = data['notes']
 
         elif config['mode'] == 'accompagnement':
-            # On récupère directement le chord_map et les VLMCs générés par load_symbols
-            state['chord_map'] = data['chord_map']      # { accord: [hauteurs MIDI] }
-            state['vlmcs']     = data['vlmcs']          # { accord: (vlmc_table, all_keys) }
+            # We directly get chord_map and the VLMCs produced by load_symbols
+            state['chord_map'] = data['chord_map']      # { chord: [MIDI pitches] }
+            state['vlmcs']     = data['vlmcs']          # { chord: (vlmc_table, all_keys) }
             state['progression'] = data['progression']
 
-            # Historiques par accord pour alimenter la génération si besoin
+            # Per-chord histories to feed generation if needed
             state['accomp_history'] = {ch: [] for ch in state['chord_map']}
             backtrack_bpm = 90
             beat = 60.0 / backtrack_bpm #config['bpm']
@@ -618,7 +617,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     elif ev.type == pygame.KEYUP and ev.key in last_times['key_start']:
                         handle_keyup(ev, state, synth, history, last_times)
                         
-                # Petite pause pour éviter une consommation CPU excessive
+                # Small delay to avoid excessive CPU usage
                 pygame.time.wait(10)
                 
             pygame.quit()
@@ -642,13 +641,13 @@ def improvisation_loop(config, stop_event, log_callback=None):
                 while not stop_event.is_set():
                     
                     for msg in midi_port.iter_pending():
-                    # Utiliser polling avec timeout pour vérifier stop_event
+                    # Use polling with timeout to check stop_event
                         if msg.type == 'note_on' and msg.velocity > 0:                                                        
                             handle_keydown_midi(msg.note, msg.velocity, state, config, synth, history, last_times, log_callback)
                         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                             handle_keyup_midi(msg.note, state, synth, history, last_times)
                         else:
-                            # Petite pause si aucun message MIDI
+                            # Small pause if no MIDI message
                             threading.Event().wait(0.01)  # 10ms
                         """
                 n =  0
@@ -656,10 +655,10 @@ def improvisation_loop(config, stop_event, log_callback=None):
                     for note, velocity, duration in zip(default_gesture['note_indices'],
                                                 default_gesture['velocities'],
                                                 default_gesture['durations']):
-                        # Simuler note_on
+                        # Simulate note_on
                         handle_keydown_midi(note, velocity, state, config, synth, history, last_times, log_callback)
                         sleep(duration)  
-                        # Simuler note_off
+                        # Simulate note_off
                         handle_keyup_midi(note, state, synth, history, last_times)
                         n+=1
                         """
@@ -676,7 +675,7 @@ def improvisation_loop(config, stop_event, log_callback=None):
         print(f"Erreur dans la boucle d'improvisation: {e}")
     
     finally:
-        # Nettoyage final
+        # Final cleanup
         if config['mode'] == 'accompagnement' and state.get('note_entries'):
             save_accomp_entries_to_file(state)
             if log_callback:
@@ -695,34 +694,34 @@ def improvisation_loop(config, stop_event, log_callback=None):
             log_callback("Boucle d'improvisation terminée")
 
 def stop_impro_thread():
-    """Arrête le thread d'improvisation en cours."""
+    """Stop the running improvisation thread."""
     global _impro_thread, _stop_event, _accomp_stop
     
-    # Arrêter l'accompagnement si il existe
+    # Stop accompaniment if it exists
     if '_accomp_stop' in globals() and _accomp_stop is not None:
         _accomp_stop.set()
     
-    # Arrêter le thread principal d'improvisation
+    # Stop the main improvisation thread
     if _stop_event is not None:
         _stop_event.set()
         if _impro_thread is not None and _impro_thread.is_alive():
-            _impro_thread.join(timeout=2.0)  # Attendre max 2 secondes
+            _impro_thread.join(timeout=2.0)  # Wait max 2 seconds
 
 def run_impro(config, log_callback=None):
-    """Lance (ou relance) la boucle d'improvisation dans un thread daemon.
+    """Start (or restart) the improvisation loop in a daemon thread.
 
     Args:
-        config (dict): Configuration d'improvisation.
-        log_callback: Fonction de callback pour les logs.
+        config (dict): improvisation configuration.
+        log_callback: logging callback function.
     Returns:
-        threading.Thread: Le thread en cours d'exécution (daemon).
+        threading.Thread: the running thread (daemon).
     """
     global _impro_thread, _stop_event, _accomp_stop
     
-    # Arrêter proprement toute improvisation en cours
+    # Gracefully stop any running improvisation
     stop_impro_thread()
         
-    # Créer un nouvel event et thread
+    # Create a new event and thread
     _stop_event = threading.Event()
     _impro_thread = threading.Thread(target=improvisation_loop,
                                      args=(config, _stop_event, log_callback),
