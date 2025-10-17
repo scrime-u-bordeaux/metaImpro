@@ -75,7 +75,7 @@ Then, in the window:
 
 3. Choose your template and its parameters
 
-4. Click Start Jamming
+4. Click Start Impro
 
 
 ## Common errors
