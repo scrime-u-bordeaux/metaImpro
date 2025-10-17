@@ -4,7 +4,7 @@ import numpy as np
 import json
 import pathlib
 from typing import Dict, Any, List, Tuple, Optional
-import model as md
+import deep_learning.model as md
 import time
 
 class PianoGenieEngine:

@@ -649,19 +649,6 @@ def improvisation_loop(config, stop_event, log_callback=None):
                         else:
                             # Small pause if no MIDI message
                             threading.Event().wait(0.01)  # 10ms
-                        """
-                n =  0
-                while n < 15:
-                    for note, velocity, duration in zip(default_gesture['note_indices'],
-                                                default_gesture['velocities'],
-                                                default_gesture['durations']):
-                        # Simulate note_on
-                        handle_keydown_midi(note, velocity, state, config, synth, history, last_times, log_callback)
-                        sleep(duration)  
-                        # Simulate note_off
-                        handle_keyup_midi(note, state, synth, history, last_times)
-                        n+=1
-                        """
                 midi_port.close()
                 
             except (OSError, IOError) as e:
@@ -718,7 +705,7 @@ def run_impro(config, log_callback=None):
     """
     global _impro_thread, _stop_event, _accomp_stop
     
-    # Gracefully stop any running improvisation
+    # Stop any running improvisation
     stop_impro_thread()
         
     # Create a new event and thread

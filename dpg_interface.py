@@ -8,7 +8,7 @@ from datetime import datetime
 import random
 import fluidsynth
 
-model_list = ['oracle', 'markov', 'random', 'accompagnement', 'Autoencoder']
+model_list = ['oracle', 'markov', 'random', 'accompagnement']
 is_impro_running = False
 CORPUS_FOLDER = 'corpus'
 BOOL_MAP = {"True": True, "False": False} 
@@ -38,13 +38,6 @@ def get_corpus():
         return []
     return [f for f in files if f.lower().endswith('.mid') or f.lower().endswith('.midi') or f.lower().endswith('.json')]
 
-def get_pt_files(folder="piano_genie"):
-    """Récupère la liste des fichiers .pt dans le dossier piano_genie."""
-    try:
-        files = os.listdir(folder)
-    except FileNotFoundError:
-        return []
-    return [f for f in files if f.lower().endswith('.pt')]
 
 def append_log_entry(msg: str):
     global note_history
@@ -191,24 +184,8 @@ def update_pie_chart(top_probs, chosen_pitch, next_prob, bar_tag="markov_pie_ser
       
 def on_model_change(sender, app_data, user_data):
     slider_tag, markov_tag, progress_tag, lvl_tag, n_cand_tag, bpm_tag, accomp_mod_tag, backtrack_checkbox_tag= user_data
-    if app_data == 'Autoencoder':
-        pt_items = get_pt_files("piano_genie")
-        dpg.configure_item('corpus_combo', items=pt_items, default_value=pt_items[0] if pt_items else None, label='Choisissez les poids')
-        dpg.hide_item(slider_tag)
-        dpg.hide_item(markov_tag)
-        dpg.hide_item(progress_tag)
-        dpg.hide_item(lvl_tag)
-        dpg.hide_item(n_cand_tag)
-        dpg.hide_item(bpm_tag)
-        dpg.hide_item("markov_plot")
-        dpg.hide_item("oracle_text")
-        dpg.hide_item("markov_text")
-        dpg.hide_item(accomp_mod_tag)
-        dpg.hide_item(backtrack_checkbox_tag)
-        dpg.hide_item(backtrack_checkbox_tag)
-    else:
-        corpus_items = get_corpus()
-        dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
+    corpus_items = get_corpus()
+    dpg.configure_item('corpus_combo', items=corpus_items, default_value=corpus_items[0] if corpus_items else None, label="Choisissez un morceau")
 
     if app_data == 'oracle':
         dpg.show_item(slider_tag)
@@ -289,9 +266,6 @@ def on_launch(sender, app_data):
         accomp_mode = dpg.get_value('accomp_mode_combo')
         backtrack_mode = dpg.get_value('backtrack_checkbox')
 
-    if model == 'Autoencoder':
-        lignes.append(f"Checkpoint : {dpg.get_value('corpus_combo')}")
-
     lignes.append(f"Device entrée MIDI : {dpg.get_value('device_in_combo')}")
     lignes.append(f"Device sortie MIDI : {dpg.get_value('device_out_combo')}")
     lignes.append(f"Driver audio : {dpg.get_value('audio_combo')}")
@@ -331,8 +305,6 @@ def on_launch(sender, app_data):
             cfg['backtrack_mode'] = backtrack_mode
     elif model == 'random':
         cfg['corpus'] = os.path.join(CORPUS_FOLDER, chosen)
-    else:  # Autoencoder
-        cfg['corpus'] = os.path.join('piano_genie', chosen)
 
     is_impro_running = True
     update_button_text()

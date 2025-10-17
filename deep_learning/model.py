@@ -1,173 +1,136 @@
-import os
-import random
+# Voir https://colab.research.google.com/drive/124pk1yehPx1y-K3hBG6-SoUSVqQ-RWnM?usp=sharing#scrollTo=9UQ9PAvMCwd2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from chord_model import FactorizedChord2Vec, type2idx
-import pickle
 
-# 1) Chargement et préparation des données
-class MelodyDataset(Dataset):
-    def __init__(self, performances, seq_len=128, jitter=0.05, dt_max=1.0, train=True):
-        """
-        performances: liste de performances, chaque perf est une liste de tuples
-          (onset, duration, pitch, root_idx, type_idx)
-        seq_len: longueur fixe des séquences
-        jitter: amplitude max du bruit uniforme ajouté aux delta-times
-        dt_max: clip des delta-times entre 0 et dt_max
-        """
-        self.perf = performances
-        self.seq_len = seq_len
-        self.jitter = jitter
-        self.dt_max = dt_max
-        self.train = train
+PIANO_LOWEST_KEY_MIDI_PITCH = 21
+PIANO_NUM_KEYS = 88
 
-    def __len__(self):
-        return len(self.perf)
+SOS = PIANO_NUM_KEYS
 
-    def __getitem__(self, idx):
-        p = self.perf[idx]
-        L = len(p)
-        # choisir un segment
-        if self.train and L > self.seq_len:
-            start = random.randint(0, L - self.seq_len)
-        else:
-            start = 0
-        segment = p[start: start + self.seq_len]
-        assert len(segment) == self.seq_len, "Performance trop courte"
 
-        # extraire pitch, onset, duration, chord
-        onsets = [n[0] for n in segment]
-        pitches= [n[2] for n in segment]
-        roots  = [n[3] for n in segment]
-        types  = [n[4] for n in segment]
-
-        # calcul des delta times
-        dt = []
-        prev = onsets[0]
-        for o in onsets:
-            delta = o - prev
-            prev = o
-            if self.train:
-                delta += random.uniform(-self.jitter, self.jitter)
-            dt.append(delta)
-        dt = [max(0, min(d, self.dt_max)) for d in dt]
-
-        return {
-            'pitch': torch.tensor(pitches, dtype=torch.long),
-            'dt':    torch.tensor(dt,     dtype=torch.float),
-            'root':  torch.tensor(roots,   dtype=torch.long),
-            'type':  torch.tensor(types,   dtype=torch.long),
-        }
-
-# 2) Embedding de l'accord via Chord2Vec déjà entraîné
-class ChordEmbedding(nn.Module):
-    def __init__(self, chord2vec_model):
+# Decoder
+class PianoGenieDecoder(nn.Module):
+    def __init__(self, rnn_dim=128, rnn_num_layers=2):
         super().__init__()
-        self.u_root = chord2vec_model.u_root
-        self.u_type = chord2vec_model.u_type
-
-    def forward(self, root_idx, type_idx):
-        e_r = self.u_root(root_idx)
-        e_t = self.u_type(type_idx)
-        return torch.cat([e_r, e_t], dim=-1)
-
-# 3) Modèle LSTM conditionnel
-class ConditionalLSTM(nn.Module):
-    def __init__(self,
-                 pitch_vocab_size=88,
-                 chord_emb_dim=80,
-                 hidden_dim=256,
-                 num_layers=2,
-                 dropout=0.1):
-        super().__init__()
-        self.input_dim = pitch_vocab_size + 1 + chord_emb_dim
-        self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
-
-        self.input_proj = nn.Linear(self.input_dim, hidden_dim)
+        self.rnn_dim = rnn_dim
+        self.rnn_num_layers = rnn_num_layers
+        self.input = nn.Linear(PIANO_NUM_KEYS + 3, rnn_dim)
         self.lstm = nn.LSTM(
-            hidden_dim,
-            hidden_dim,
-            num_layers,
+            rnn_dim,
+            rnn_dim,
+            rnn_num_layers,
             batch_first=True,
-            dropout=dropout
+            bidirectional=False,
         )
-        self.out_pitch = nn.Linear(hidden_dim, pitch_vocab_size)
-        self.out_dt = nn.Linear(hidden_dim, 1)
-        self.contour_proj = nn.Linear(hidden_dim, 1, bias=False)
-    def forward(self, pitch, dt, chord_emb, hidden=None):
-        one_hot = F.one_hot(pitch, num_classes=self.out_pitch.out_features).float()
-        x = torch.cat([one_hot, dt.unsqueeze(-1), chord_emb], dim=-1)
-        x = self.input_proj(x)
-        x, h = self.lstm(x, hidden)
-        logits = self.out_pitch(x)
-        dt_pred = self.out_dt(x).squeeze(-1)
-        e_contour = self.contour_proj(x).squeeze(-1)
-        return logits, dt_pred, e_contour, h
-
-# 4) Exemple d'usage
-if __name__ == '__main__':
-    # chemins vers les fichiers pré-trainés
-    CHORD2VEC_PATH = 'chord2vec_model.pth'
-    DATASET_PATH    = 'dataset_transposed.pkl'
-
-    # charger dataset pré-transposé
-    with open(DATASET_PATH, 'rb') as f:
-        dataset_raw = pickle.load(f)
-
-    # DataLoader
-    seq_len = 128
-    ds_train = MelodyDataset(dataset_raw['train'], seq_len=seq_len, jitter=0.05, train=True)
-    ds_val   = MelodyDataset(dataset_raw['val'],   seq_len=seq_len, jitter=0.0,  train=False)
-    dl_train = DataLoader(ds_train, batch_size=32, shuffle=True,  drop_last=True)
-    dl_val   = DataLoader(ds_val,   batch_size=32, shuffle=False, drop_last=False)
-
-    # charger modèle chord2vec entraîné
+        self.output = nn.Linear(rnn_dim, 88)
     
-    chord2vec = FactorizedChord2Vec(V_root=12, V_type=len(type2idx))
-    chord2vec.load_state_dict(torch.load(CHORD2VEC_PATH))
-    chord2vec.eval()
-    chord_emb_model = ChordEmbedding(chord2vec)
+    def init_hidden(self, batch_size, device=None):
+        h = torch.zeros(self.rnn_num_layers, batch_size, self.rnn_dim, device=device)
+        c = torch.zeros(self.rnn_num_layers, batch_size, self.rnn_dim, device=device)
+        return (h, c)
 
-    # définir ConditionalLSTM
-    chord_dim = chord_emb_model.u_root.embedding_dim + chord_emb_model.u_type.embedding_dim
-    model = ConditionalLSTM(pitch_vocab_size=88, chord_emb_dim=chord_dim)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    def forward(self, k, t, b, h_0=None):
+        # Prepend <S> token to shift k_i to k_{i-1}
+        k_m1 = torch.cat([torch.full_like(k[:, :1], SOS), k[:, :-1]], dim=1)
 
-    # boucle d'entraînement + validation
-    for epoch in range(1, 11):
-        model.train()
-        total_loss = 0
-        for batch in dl_train:
-            pitch = batch['pitch']
-            dt    = batch['dt']
-            chord_e = chord_emb_model(batch['root'], batch['type'])
+        # Encode input
+        inputs = [
+            F.one_hot(k_m1, PIANO_NUM_KEYS + 1),
+            t.unsqueeze(dim=2),
+            b.unsqueeze(dim=2),
+        ]
+        x = torch.cat(inputs, dim=2)
 
-            logits, dt_pred, _ = model(pitch, dt, chord_e)
-            loss_pitch = F.cross_entropy(logits.view(-1, logits.size(-1)), pitch.view(-1))
-            loss_dt    = F.mse_loss(dt_pred, dt)
-            loss = loss_pitch + 0.1 * loss_dt
+        # Project encoded inputs
+        x = self.input(x)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # Run RNN
+        if h_0 is None:
+            h_0 = self.init_hidden(k.shape[0], device=k.device)
+        x, h_N = self.lstm(x, h_0)
 
-            total_loss += loss.item()
-        avg_train_loss = total_loss / len(dl_train)
+        # Compute logits
+        hat_k = self.output(x)
 
-        model.eval()
-        val_loss = 0
+        return hat_k, h_N
+
+# Encoder
+class PianoGenieEncoder(nn.Module):
+    def __init__(self, rnn_dim=128, rnn_num_layers=2):
+        super().__init__()
+        self.rnn_dim = rnn_dim
+        self.rnn_num_layers = rnn_num_layers
+        self.input = nn.Linear(PIANO_NUM_KEYS + 1, rnn_dim)
+        self.lstm = nn.LSTM(
+            rnn_dim,
+            rnn_dim,
+            rnn_num_layers,
+            batch_first=True,
+            bidirectional=True,
+        )
+        self.output = nn.Linear(rnn_dim * 2, 1)
+
+    def forward(self, k, t):
+        inputs = [
+            F.one_hot(k, PIANO_NUM_KEYS),
+            t.unsqueeze(dim=2),
+        ]
+        x = self.input(torch.cat(inputs, dim=2))
+        # NOTE: PyTorch uses zeros automatically if h is None
+        x, _ = self.lstm(x, None)
+        x = self.output(x)
+        return x[:, :, 0]
+
+# IQAE quantizer
+class IntegerQuantizer(nn.Module):
+    def __init__(self, num_bins):
+        super().__init__()
+        self.num_bins = num_bins
+
+    def real_to_discrete(self, x, eps=1e-6):
+        x = (x + 1) / 2
+        x = torch.clamp(x, 0, 1)
+        x *= self.num_bins - 1
+        x = (torch.round(x) + eps).long()
+        return x
+
+    def discrete_to_real(self, x):
+        x = x.float()
+        x /= self.num_bins - 1
+        x = (x * 2) - 1
+        return x
+
+    def forward(self, x):
+        # Quantize and compute delta (used for straight-through estimator)
         with torch.no_grad():
-            for batch in dl_val:
-                pitch = batch['pitch']
-                dt    = batch['dt']
-                chord_e = chord_emb_model(batch['root'], batch['type'])
-                logits, dt_pred, _ = model(pitch, dt, chord_e)
-                loss_pitch = F.cross_entropy(logits.view(-1, logits.size(-1)), pitch.view(-1))
-                loss_dt    = F.mse_loss(dt_pred, dt)
-                val_loss += (loss_pitch + 0.1*loss_dt).item()
-        avg_val_loss = val_loss / len(dl_val)
+            x_disc = self.real_to_discrete(x)
+            x_quant = self.discrete_to_real(x_disc)
+            x_quant_delta = x_quant - x
 
-        print(f"Epoch {epoch}: train_loss={avg_train_loss:.4f}, val_loss={avg_val_loss:.4f}")
+        # @markdown In the backwards pass, we will use the straight-through estimator (Bengio et al. 2013), i.e., pretend that this discretization did not happen when computing gradients.
+        # Quantize w/ straight-through estimator
+        x = x + x_quant_delta
+
+        return x
+
+
+# Autoencoder : rénuion 
+class PianoGenieAutoencoder(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.enc = PianoGenieEncoder(
+            rnn_dim=cfg["model_rnn_dim"],
+            rnn_num_layers=cfg["model_rnn_num_layers"],
+        )
+        self.quant = IntegerQuantizer(cfg["num_buttons"])
+        self.dec = PianoGenieDecoder(
+            rnn_dim=cfg["model_rnn_dim"],
+            rnn_num_layers=cfg["model_rnn_num_layers"],
+        )
+
+    def forward(self, k, t):
+        e = self.enc(k, t)
+        b = self.quant(e)
+        hat_k, _ = self.dec(k, t, b)
+        return hat_k, e

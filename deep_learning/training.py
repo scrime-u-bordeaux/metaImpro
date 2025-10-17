@@ -4,7 +4,7 @@ import numpy as np
 import json
 import torch
 import torch.nn.functional as F
-import model as md
+import deep_learning.model as md
 from midi_processor import MidiSymbolProcessor
 import matplotlib.pyplot as plt
 
