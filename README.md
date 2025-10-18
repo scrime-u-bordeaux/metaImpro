@@ -57,7 +57,8 @@ pip install -r requirements.txt
 ```
 4. Prepare your corpus
 
-Create a corpus/ folder at the root (it already exists with some examples, add your monophonic .mid files to it)
+Create a corpus/ folder at the root (it already exists with some examples, add your monophonic .mid files to it).
+
 Download the omnibook_xml at this adresse https://homepages.loria.fr/evincent/omnibook/ and modify the path with yours in the dpg_impro.py file.
 
 ## Usage
