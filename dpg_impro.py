@@ -29,7 +29,9 @@ BLACK_KEY_MAPPING = {
 
 PROGRESSION = ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7", "E7"]
 riff = [0, 2, 0, 2, 0, 4, 0, 4]
-xml_folder ="/home/sylogue/midi_xml/omnibook_xml"
+xml_folder ="./omnibook_xml"
+
+backtrack_path = './backingtrack/Blues Backing Track in A (90bpm).mp3'
 
 # global variables to handle impro thread
 _impro_thread = None
@@ -543,7 +545,6 @@ def improvisation_loop(config, stop_event, log_callback=None):
             _accomp_stop = state['accomp_stop']
 
             use_backtrack = config['backtrack_mode']
-            backtrack_path = '/home/sylogue/stage/metaImpro/corpus/Blues Backing Track in A (90bpm).mp3'
             
             if use_backtrack and backtrack_path and os.path.exists(backtrack_path):
                 # Use MP3 backtrack
